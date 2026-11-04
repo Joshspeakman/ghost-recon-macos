@@ -59,6 +59,9 @@ void rt_hook(Ctx *c, uint32_t addr)
 #ifdef DF_EDITION
     if (df_hook(c, addr)) return;
 #endif
+#ifdef GTA3_EDITION
+    { int gta3_hook(Ctx *, uint32_t); if (gta3_hook(c, addr)) return; }   /* gta3_mode.c */
+#endif
     switch (addr) {
     case DS2_MOOD_READ: mood_read(c); break;
     default:   /* development trace hooks (tools/lift.py DS_TRACE_HOOKS) */

@@ -1,68 +1,58 @@
 #!/bin/bash
-# install.sh --game-dir <Delta Force or Delta Force 2 folder> [--app-dir DIR] [--data-dir DIR] [--branch main|nightly] [--no-downloads] [--in-place]
+# install.sh --game-dir <GTAIII folder> [--app-dir DIR] [--data-dir DIR] [--branch main|nightly] [--no-downloads] [--in-place]
 #
-# Builds the natively recompiled Delta Force (Steam app 32620) or Delta Force 2 (Steam app 32630) from your own Steam
-# copy and installs it: on macOS "Delta Force.app" / "Delta Force 2.app" (default in ~/Applications), on Linux a
-# launcher in ~/.local/bin (delta-force, delta-force-2). Which game it is follows from the folder (Df.exe or Df2.exe).
-# The game folder is only read; settings, soldiers, saves and logs go to the data folder (default
-# ~/Games/DeltaForceNative or ~/Games/DeltaForce2Native). Copy the Steam folder over from the PC as it is (steamapps/
-# common/Delta Force, or Delta Force 2): Df.exe or Df2.exe, the .pff archives, Netsock.dll, Cmprssh0.dll (and DF2's
-# Hw_d3d.dll). Needs clang and python3 (macOS: the Xcode command line tools; Linux: SDL2, GLEW, freetype, fontconfig,
-# libsndfile, libpng development packages). The recompiler installs capstone with pip into recomp/.venv.
-# On macOS the app opens with a launch window (screen shape, frame rate, NovaWorld, router, updates). Its art and the
-# app's icon come from the game's Steam store page (logo and background), downloaded here into the data folder's art/;
-# --no-downloads uses the game's own splash and menu screens instead.
+# Builds the natively recompiled Grand Theft Auto III from your own Steam copy and installs it as "Grand Theft Auto
+# III.app" ("Grand Theft Auto III Nightly.app" with --branch nightly) in ~/Applications. The game folder is the Mac
+# Steam release's (app 12230): Grand Theft Auto 3.app/Contents/Resources/transgaming/c_drive/Program Files/Rockstar
+# Games/GTAIII (the Windows gta3.exe inside TransGaming's wrapper), or a copy of it made by an earlier install.
+# The game is copied into the data folder (default ~/Games/GTA3Native/game-files/GTAIII; an APFS clone, no extra space)
+# with the radio and cutscene audio the wrapper keeps beside it (c_drive/Audio), so the Steam copy can go afterwards;
+# --in-place reads the given folder instead. Saves and settings go to the data folder (drive_c/.../GTA3 User Files).
+# The app opens with a launch window (display, notch, resolution, VSync, saves, updates); its art comes from the game's
+# Steam store page (tools/gta3_art.py, into the data folder's art/; --no-downloads writes the title instead) and its
+# icon is the Mac release's own. Needs clang and python3 (the Xcode command line tools); the recompiler installs
+# capstone with pip into recomp/.venv.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-GAME=""; APPS=""; DATA=""; NODL=""; U_BRANCH=main
-IN_PLACE=""
+GAME=""; APPS=""; DATA=""; NODL=""; U_BRANCH=main; IN_PLACE=""
 while [ $# -gt 0 ]; do
-  case "$1" in --in-place) IN_PLACE=1; shift; continue;; esac
   case "$1" in
     --game-dir) GAME="$2"; shift 2;; --app-dir) APPS="$2"; shift 2;; --data-dir) DATA="$2"; shift 2;;
     --branch) U_BRANCH="$2"; shift 2;;
     --no-downloads) NODL=--no-downloads; shift;;
+    --in-place) IN_PLACE=1; shift;;
     *) echo "unknown option $1"; exit 1;;
   esac
 done
 [[ "$U_BRANCH" == main || "$U_BRANCH" == nightly ]] || { echo "--branch must be main or nightly"; exit 1; }
-[ -n "$GAME" ] || { echo "usage: install.sh --game-dir <the Steam Delta Force or Delta Force 2 folder>"; exit 1; }
+[ -n "$GAME" ] || { echo "usage: install.sh --game-dir <the GTAIII folder>"; exit 1; }
+[[ $(uname -s) == Darwin ]] || { echo "the GTA III port is macOS only for now"; exit 1; }
 GAME="$(cd "$GAME" && pwd)"
-if [ -f "$GAME/Df2.exe" ]; then G=df2; EXE=Df2.exe; NAME="Delta Force 2"; BIN=DeltaForce2; ID=delta-force-2
-elif [ -f "$GAME/Df.exe" ]; then G=df1; EXE=Df.exe; NAME="Delta Force"; BIN=DeltaForce; ID=delta-force
-else echo "$GAME has neither Df.exe nor Df2.exe"; exit 1; fi
-DATA="${DATA:-$HOME/Games/${BIN}Native}"; mkdir -p "$DATA"
+[ -f "$GAME/gta3.exe" ] || { echo "$GAME has no gta3.exe"; exit 1; }
+EXE=gta3.exe; BIN=GTA3; NAME="Grand Theft Auto III"; ID=com.joshspeakman.gta3
+[[ "$U_BRANCH" == nightly ]] && { NAME="$NAME Nightly"; ID=$ID.nightly; }
+DATA="${DATA:-$HOME/Games/GTA3Native}"; mkdir -p "$DATA"
+# the Mac release's wrapper: the app bundle around the game folder (its icon) and the radio/cutscene audio (c_drive/Audio)
+WRAP_RES="$(cd "$GAME/../../../../.." 2>/dev/null && pwd || true)"; WRAP_AUDIO="$(cd "$GAME/../../../Audio" 2>/dev/null && pwd || true)"
+[ -f "$WRAP_RES/grandtheftauto3.icns" ] && { mkdir -p "$DATA/art"; cp "$WRAP_RES/grandtheftauto3.icns" "$DATA/art/icon.icns"; }
+
 echo "== recompiling $NAME from $GAME (a few minutes)"
-"$HERE/recomp/build_df.sh" "$GAME" "$HERE/recomp/work/$G"
-OUT="$HERE/recomp/work/$G"
-# The game is copied into the data folder (game-files) and the app reads it from there, so the folder it was installed
-# from is no longer needed and can be deleted. On a Mac the copy is an APFS clone: it takes no extra space. Updates and
-# reinstalls keep using the copy. --in-place reads the given folder instead (nothing is copied).
+"$HERE/recomp/build_gta3.sh" "$GAME" "$HERE/recomp/work/gta3"
+OUT="$HERE/recomp/work/gta3"
 if [ -z "$IN_PLACE" ]; then case "$GAME/" in "$DATA"/*) ;; *)
-  GF="$DATA/game-files"; echo "== copying the game from $GAME into $GF"
-  mkdir -p "$DATA"; rm -rf "$GF.part"
-  if [ "$(uname -s)" = Darwin ]; then cp -cRL "$GAME" "$GF.part" 2>/dev/null || { rm -rf "$GF.part"; cp -RL "$GAME" "$GF.part"; }
-  else cp -RL --reflink=auto "$GAME" "$GF.part"; fi
+  GF="$DATA/game-files/GTAIII"; echo "== copying the game from $GAME into $GF"
+  mkdir -p "$DATA/game-files"; rm -rf "$GF.part"
+  cp -cRL "$GAME" "$GF.part" 2>/dev/null || { rm -rf "$GF.part"; cp -RL "$GAME" "$GF.part"; }
   rm -rf "$GF"; mv "$GF.part" "$GF"
   echo "== the app reads the game from $GF: $GAME is no longer needed (delete it to free the space)"; GAME="$GF";;
 esac; fi
-Q_GAME=$(printf '%q' "$GAME"); Q_DATA=$(printf '%q' "$DATA")      # shell-quoted: any folder name is only data
-
-if [[ $(uname -s) == Linux ]]; then
-  BIN_LINUX="${BIN}Linux"; [ "$G" = df1 ] && BIN_LINUX=DeltaForceLinux
-  DEST="${APPS:-$HOME/.local/share/$ID}"; mkdir -p "$DEST" "$HOME/.local/bin"
-  cp "$OUT/app/$BIN_LINUX" "$OUT/app/"*.glsl "$OUT/app/dsr_snapshot.bin" "$DEST/"; cp "$OUT/$EXE" "$DEST/$EXE"
-  cat > "$HOME/.local/bin/$ID" <<LAUNCH
-#!/bin/bash
-# $NAME (generated by install.sh)
-DEF_GAME=$Q_GAME
-DEF_DATA=$Q_DATA
-GAME="\${DF_GAME_DIR:-\$DEF_GAME}"; DATA="\${DF_DATA_DIR:-\$DEF_DATA}"
-exec $(printf '%q' "$DEST/$BIN_LINUX") --exe $(printf '%q' "$DEST/$EXE") --game "\$GAME" --data "\$DATA" "\$@"
-LAUNCH
-  chmod +x "$HOME/.local/bin/$ID"
-  echo "== done: run $ID (data in $DATA)"; exit 0
+# the radio stations and cutscene audio: the game asks for them on its "CD" (C:\Audio, mapped to the game's audio/)
+if [ -n "$WRAP_AUDIO" ] && [ -f "$WRAP_AUDIO/HEAD.WAV" ] && [ ! -f "$GAME/audio/HEAD.WAV" ]; then
+  echo "== copying the radio and cutscene audio from $WRAP_AUDIO"
+  mkdir -p "$GAME/audio"; for f in "$WRAP_AUDIO"/*; do [ -e "$GAME/audio/$(basename "$f")" ] || cp -cRL "$f" "$GAME/audio/" 2>/dev/null || cp -RL "$f" "$GAME/audio/"; done
 fi
+[ -f "$GAME/audio/HEAD.WAV" ] || echo "   (no radio audio found: the game will ask for its second disc; copy c_drive/Audio into $GAME/audio)"
+Q_GAME=$(printf '%q' "$GAME"); Q_DATA=$(printf '%q' "$DATA")      # shell-quoted: any folder name is only data
 
 APPS="${APPS:-$HOME/Applications}"; A="$APPS/$NAME.app"; echo "== installing $A"
 mkdir -p "$APPS"; rm -rf "$A"; mkdir -p "$A/Contents/MacOS" "$A/Contents/Resources"
@@ -80,7 +70,11 @@ if [ -n "$U_REPO" ] && [ -n "$U_BUILT" ] && git -C "$U_REPO" remote get-url orig
 # "update" fetches it into a worktree of the checkout this app was installed from and rebuilds the app from it
 set -euo pipefail
 REPO=$(printf '%q' "$U_REPO"); BRANCH=$U_BRANCH; W="\$REPO/build/$U_WORK"
-export GIT_TERMINAL_PROMPT=0                              # never wait for a password prompt
+export GIT_TERMINAL_PROMPT=0 PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"   # never wait for a password prompt
+# a private repository: git signs in through gh with the repository owner's account (gh's active one may differ)
+OWNER="\$(git -C "\$REPO" remote get-url origin | sed -E 's#.*github.com[:/]([^/]+)/.*#\1#')"
+[ -n "\${GH_TOKEN:-}" ] || GH_TOKEN="\$(gh auth token --user "\$OWNER" 2>/dev/null || true)"
+[ -z "\$GH_TOKEN" ] || export GH_TOKEN
 if [ "\${1:-}" = --check ]; then                          # GitHub's newest, unless this app already has it: a build
   R="\$(git -C "\$REPO" ls-remote origin "refs/heads/\$BRANCH" | cut -f1)"   # from a newer local commit is never offered an older one
   if [ -n "\$R" ] && git -C "\$REPO" merge-base --is-ancestor "\$R" $U_BUILT 2>/dev/null; then echo $U_BUILT; else echo "\$R"; fi
@@ -92,7 +86,7 @@ git -C "\$REPO" worktree prune
 if [ -e "\$W/.git" ]; then git -C "\$W" checkout -q -f --detach "origin/\$BRANCH"
 else mkdir -p "\$REPO/build"; git -C "\$REPO" worktree add -q -f --detach "\$W" "origin/\$BRANCH"; fi
 echo "== \$BRANCH: \$(git -C "\$W" log -1 --format='%h %s')"
-[ -e "\$W/recomp/.venv" ] || [ ! -d "\$REPO/recomp/.venv" ] || ln -s "\$REPO/recomp/.venv" "\$W/recomp/.venv"   # share the tools
+[ -e "\$W/recomp/.venv" ] || [ ! -e "\$REPO/recomp/.venv" ] || ln -s "\$(readlink "\$REPO/recomp/.venv" 2>/dev/null || echo "\$REPO/recomp/.venv")" "\$W/recomp/.venv"   # share the tools
 exec "\$W/install.sh" --game-dir $Q_GAME --data-dir $Q_DATA --app-dir $(printf '%q' "$APPS") --branch $U_BRANCH $NODL
 UPDATE
   chmod +x "$A/Contents/MacOS/update"
@@ -100,13 +94,11 @@ fi
 cat > "$A/Contents/MacOS/launcher" <<LAUNCH
 #!/bin/bash
 # $NAME launcher (generated by install.sh; for the terminal: the app itself opens $BIN with Resources/launch.plist)
-DEF_GAME=$Q_GAME
-DEF_DATA=$Q_DATA
-GAME="\${DF_GAME_DIR:-\$DEF_GAME}"; DATA="\${DF_DATA_DIR:-\$DEF_DATA}"
+GAME="\${DF_GAME_DIR:-$Q_GAME}"; DATA="\${DF_DATA_DIR:-$Q_DATA}"
 mkdir -p "\$DATA"; L="\$DATA/$BIN.log"
 [ -f "\$L" ] && [ "\$(stat -f %z "\$L")" -gt 5000000 ] && mv -f "\$L" "\$DATA/$BIN.old.log"
 B="\$(cd "\$(dirname "\$0")" && pwd)"; export DS_LOG_FILE="\$L"
-[ -x "\$B/update" ] && export DS_UPDATER="\$B/update" DS_UPDATE_BRANCH=$U_BRANCH DS_BUILT_COMMIT=$U_BUILT   # the launch window's Updates row
+[ -x "\$B/update" ] && export DS_UPDATER="\$B/update" DS_UPDATE_BRANCH=$U_BRANCH DS_BUILT_COMMIT=$U_BUILT   # the launch window's Updates tile
 exec "\$B/$BIN" --exe "\$B/../Resources/$EXE" --game "\$GAME" --data "\$DATA" 2>>"\$L"
 LAUNCH
 chmod +x "$A/Contents/MacOS/launcher"
@@ -121,41 +113,31 @@ cat > "$A/Contents/Info.plist" <<PLIST
 <plist version="1.0"><dict>
   <key>CFBundleName</key><string>$NAME</string>
   <key>CFBundleDisplayName</key><string>$NAME</string>
-  <key>CFBundleIdentifier</key><string>io.github.delta-force-macos.$ID</string>
+  <key>CFBundleIdentifier</key><string>$ID</string>
   <key>CFBundleExecutable</key><string>$BIN</string>
   <key>CFBundleIconFile</key><string>icon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>${U_BUILT:0:7}</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.action-games</string>
   <key>GCSupportsGameMode</key><true/>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
-  <key>NSLocalNetworkUsageDescription</key><string>$NAME looks for and hosts multiplayer games on your local network.</string>
 </dict></plist>
 PLIST
-# the launch window's art (tools/df_art.py): the game's logo and background from its Steam store page, or the game's
-# own splash and menu screens; in the data folder, and a copy in the app (for a copy of the app moved to another Mac)
-if python3 "$HERE/recomp/tools/df_art.py" "$GAME" "$DATA/art" $NODL >/dev/null 2>&1; then
-  echo "== the launch window's art: $(python3 -c 'import os,sys; print(", ".join(sorted(os.listdir(sys.argv[1]))))' "$DATA/art")"
-  cp -R "$DATA/art" "$A/Contents/Resources/art"
+# the launch window's art (tools/gta3_art.py): in the data folder, and a copy in the app
+if python3 "$HERE/recomp/tools/gta3_art.py" "$DATA/art" $NODL >/dev/null 2>&1 && ls "$DATA/art/"*.jpg >/dev/null 2>&1; then
+  echo "== the launch window's art: $(cd "$DATA/art" && ls | tr '\n' ' ')"
+  mkdir -p "$A/Contents/Resources/art"; cp "$DATA/art/"*.jpg "$DATA/art/"*.png "$A/Contents/Resources/art/" 2>/dev/null || true
 else echo "   (no art for the launch window: it writes the title)"; fi
-# the icon: the logo on the background (tools/df_icon.m), every size macOS asks for. The game's own icon is a 32x32
-# Windows one, too small for the Dock: only if there is no logo
-I="$(mktemp -d)"
-BACK="$DATA/art/backdrop.jpg"; [ -f "$BACK" ] || BACK=-
-if [ -f "$DATA/art/logo.png" ] && clang -fobjc-arc -framework AppKit "$HERE/recomp/tools/df_icon.m" -o "$I/df_icon" 2>/dev/null \
-   && "$I/df_icon" "$DATA/art/logo.png" "$BACK" "$I/icon.png" $( [ "$G" = df2 ] && echo --df2 ); then
-  mkdir -p "$I/icon.iconset"
-  for n in 16 32 128 256 512; do
-    sips -z $n $n "$I/icon.png" --out "$I/icon.iconset/icon_${n}x${n}.png" >/dev/null
-    sips -z $((2 * n)) $((2 * n)) "$I/icon.png" --out "$I/icon.iconset/icon_${n}x${n}@2x.png" >/dev/null
-  done
-  iconutil -c icns "$I/icon.iconset" -o "$A/Contents/Resources/icon.icns" 2>/dev/null || sips -s format icns "$I/icon.png" --out "$A/Contents/Resources/icon.icns" >/dev/null 2>&1 || true
-elif python3 "$HERE/recomp/tools/extract_icon.py" "$OUT/$EXE" "$I/df.ico" 2>/dev/null && sips -s format png "$I/df.ico" --out "$I/df.png" >/dev/null 2>&1; then
-  sips -z 512 512 "$I/df.png" --out "$I/df512.png" >/dev/null && sips -s format icns "$I/df512.png" --out "$A/Contents/Resources/icon.icns" >/dev/null 2>&1 || true
+# the icon: the Mac release's own (kept in the data folder's art/), else the Windows executable's
+if [ -f "$DATA/art/icon.icns" ]; then cp "$DATA/art/icon.icns" "$A/Contents/Resources/icon.icns"
+else
+  I="$(mktemp -d)"
+  if python3 "$HERE/recomp/tools/extract_icon.py" "$OUT/$EXE" "$I/g.ico" 2>/dev/null && sips -s format png "$I/g.ico" --out "$I/g.png" >/dev/null 2>&1; then
+    sips -z 512 512 "$I/g.png" --out "$I/g512.png" >/dev/null && sips -s format icns "$I/g512.png" --out "$A/Contents/Resources/icon.icns" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$I"
 fi
-rm -rf "$I"
-[ -f "$A/Contents/Resources/icon.icns" ] || echo "   (no icon could be made)"
 codesign --force --deep --sign - "$A" >/dev/null 2>&1 || true
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$A" 2>/dev/null || true
 touch "$A"                                                    # Finder and the Dock pick up the new icon
 echo "== done: $A (data in $DATA)"

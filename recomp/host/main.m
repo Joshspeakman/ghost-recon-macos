@@ -319,10 +319,17 @@ static void key_event(uint16_t code, int down, int repeat)
 
 /* A borderless window cannot become the key window by default, so it would get no keyboard events (only the mouse,
  * which goes to the window under the pointer). */
+/* The launch window's display choices (host/gta3_launcher.m): DS_DISPLAY=window, DS_NOTCH=around (else below it). */
+static NSView *game_view;   /* the picture: the window's content, or under the notch's band */
+static int windowed(void) { const char *e = getenv("DS_DISPLAY"); return e && !strcmp(e, "window"); }
+static int notch_around(void) { const char *e = getenv("DS_NOTCH"); return e && !strcmp(e, "around"); }
 @interface GameWindow : NSWindow @end
 @implementation GameWindow
 - (BOOL)canBecomeKeyWindow { return YES; }
 - (BOOL)canBecomeMainWindow { return YES; }
+/* around the notch: AppKit would move a window over the menu bar's band back down below it; full screen windows keep
+ * the frame they are given */
+- (NSRect)constrainFrameRect:(NSRect)r toScreen:(NSScreen *)s { return windowed() ? [super constrainFrameRect:r toScreen:s] : r; }
 @end
 @interface GameView : NSView @end
 @implementation GameView
@@ -356,7 +363,7 @@ static void rel_motion(double gx, double gy)
     raw_fx -= rx; raw_fy -= ry;
     w32_raw_mouse_move(rx, ry);
     uint32_t mw, mh; dsr_mode_size(&mw, &mh);
-    NSSize size = win.contentView.bounds.size;
+    NSSize size = (game_view ?: win.contentView).bounds.size;
     double scale = fmax(mw / fmax(size.width, 1), mh / fmax(size.height, 1));
     cursor_fx += gx * scale; cursor_fy += gy * scale;
     int dx = (int)fmax(-1048576.0, fmin(1048576.0, cursor_fx));
@@ -486,14 +493,28 @@ static void window_created(uint32_t hwnd, int x, int y, int w, int h, uint32_t s
 #endif
         NSRect f = NSScreen.mainScreen.frame;
         NSWindowStyleMask sm = NSWindowStyleMaskBorderless;
-        if (test_mode) { f = NSMakeRect(80, 80, 960, 620); sm = NSWindowStyleMaskTitled | NSWindowStyleMaskMiniaturizable; }
+        if (test_mode && !getenv("DS_DISPLAY")) { f = NSMakeRect(80, 80, 960, 620); sm = NSWindowStyleMaskTitled | NSWindowStyleMaskMiniaturizable; }
+        else if (windowed()) {   /* the launch window's Display: Window, 4:3 at three quarters of the desktop's height */
+            NSRect vf = NSScreen.mainScreen.visibleFrame; CGFloat h = floor(vf.size.height * 0.78), w = floor(h * 4 / 3);
+            f = NSMakeRect(NSMidX(vf) - w / 2, NSMidY(vf) - h / 2, w, h);
+            sm = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
+        }
+        CGFloat band = 0;   /* full screen below a display's notch (the camera housing): the picture under it, the band black */
+        if (!windowed() && !notch_around() && !(test_mode && !getenv("DS_DISPLAY"))) { if (@available(macOS 12.0, *)) band = NSScreen.mainScreen.safeAreaInsets.top; }
         win = [[GameWindow alloc] initWithContentRect:f styleMask:sm backing:NSBackingStoreBuffered defer:NO];
         win.releasedWhenClosed = NO;   /* ARC owns it (AppKit's default releases a closed window once more) */
         f.origin = NSZeroPoint;
         win.title = @DS2_TITLE; win.backgroundColor = NSColor.blackColor; win.acceptsMouseMovedEvents = YES;
-        GameView *v = [[GameView alloc] initWithFrame:f]; v.wantsLayer = YES;
-        win.contentView = v; [win makeFirstResponder:v];
+        GameView *v = [[GameView alloc] initWithFrame:NSMakeRect(0, 0, f.size.width, f.size.height - band)]; v.wantsLayer = YES;
+        if (band > 0) {
+            NSView *box = [[NSView alloc] initWithFrame:f]; box.wantsLayer = YES; box.layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
+            v.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable; [box addSubview:v]; win.contentView = box;
+        } else win.contentView = v;
+        game_view = v; [win makeFirstResponder:v];
+        if (windowed()) [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowWillCloseNotification object:win queue:nil
+                                                                     usingBlock:^(NSNotification *n) { (void)n; [NSApp terminate:nil]; }];
         win.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
+        if (windowed()) { win.contentMinSize = NSMakeSize(640, 480); win.contentAspectRatio = NSMakeSize(4, 3); }
         [win setLevel:NSNormalWindowLevel];
         NSWindow *w0 = win;   // the frame cap follows the display the window is on, and a changed refresh rate
         [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidChangeScreenNotification object:w0 queue:nil usingBlock:^(NSNotification *n) { (void)n; note_display(w0.screen); }];
@@ -508,9 +529,9 @@ static void window_changed(uint32_t hwnd, int x, int y, int w, int h, int visibl
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!win) return;
         if (visible && !win.visible) {
-            if (test_mode) [win orderBack:nil];
+            if (test_mode && !getenv("DS_DISPLAY")) [win orderBack:nil];
             else {
-                [NSApp setPresentationOptions:NSApplicationPresentationHideDock | NSApplicationPresentationHideMenuBar];
+                if (!windowed()) [NSApp setPresentationOptions:NSApplicationPresentationHideDock | NSApplicationPresentationHideMenuBar];
                 [win makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES]; capture(1);
             }
         }
@@ -677,7 +698,7 @@ static void enter_sandbox(const char *exe, const char *game, const char *data, c
 }
 #endif
 
-#ifdef DF_EDITION
+#if defined(DF_EDITION) || defined(GTA3_EDITION)
 /* Opened from Finder (no arguments): the app's own settings, written by install.sh in Contents/Resources/launch.plist
  * (game folder, data folder, log name, executable, updater), do what the generated launcher script does. The bundle's
  * executable is this binary, not a script: macOS only recognises a game, and so only turns on Game Mode, for a bundle
@@ -717,7 +738,7 @@ int main(int argc, char **argv)
             else if (!strcmp(argv[k], "--game")) game = argv[k + 1];
             else if (!strcmp(argv[k], "--data")) data = argv[k + 1];
         }
-#ifdef DF_EDITION
+#if defined(DF_EDITION) || defined(GTA3_EDITION)
         if (!exe && !game && !data) bundle_launch(argv[0], &exe, &game, &data);
 #endif
         if (!exe || !game || !data) { fprintf(stderr, "usage: DungeonSiegeNative --exe <DungeonSiege2.exe> --game <game folder> --data <data folder>\n"); return 1; }
@@ -735,7 +756,7 @@ int main(int argc, char **argv)
                 [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
                 int shown = !getenv("DS_NO_LAUNCHER");
                 if (!ds_launcher_run(game, data)) return 0;
-#ifdef DF_EDITION
+#if defined(DF_EDITION) || defined(GTA3_EDITION)
                 /* Play: the game in a fresh process (the choices are saved, and in the environment), this one ends. A game
                  * window shown by the process that ran the launch window can stay off screen in macOS full screen (seen in
                  * the Diablo II port); a process that never showed it always comes up. Before the sandbox, which forbids it. */
@@ -754,7 +775,7 @@ int main(int argc, char **argv)
         w32_crash_init(data, DS_BUILD); w32_crash_thread("macOS UI thread");
         { void w32_registry_install(const char *); w32_registry_install(data); }   /* values the game's installer would have written */
         NSSetUncaughtExceptionHandler(on_objc_exception);
-#ifndef DF_EDITION
+#if !defined(DF_EDITION) && !defined(GTA3_EDITION)
         ensure_resolution(drive_c);                                   // DungeonSiege2.ini
 #endif
         test_mode = getenv("DS_TEST") && atoi(getenv("DS_TEST"));
