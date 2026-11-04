@@ -93,6 +93,19 @@ IMPL(ole32, CoCreateInstance)
     uint32_t w32_dshow_create(uint32_t clsid_first_dword);
     obj = w32_dshow_create(rt_r32(G_MEM, clsid));                     /* DirectShow filter graph (music) */
     if (obj) { if (out) rt_w32(G_MEM, out, obj); RET(0, 5); }
+    {   /* DirectSound (CLSID_DirectSound 47d4d946-..., CLSID_DirectSound8 3901cc3f-...): EAX.DLL makes its device this
+         * way, then calls Initialize; the object is DirectSoundCreate's (dsound.c) */
+        uint32_t d0 = rt_r32(G_MEM, clsid);
+        if (d0 == 0x47d4d946u || d0 == 0x3901cc3fu) {
+            void imp_dsound_DirectSoundCreate(Ctx *c);
+            uint32_t esp0 = c->esp, slot = (c->esp - 0x40) & ~3u; c->esp = slot - 0x40;
+            c->esp -= 12; rt_w32(G_MEM, c->esp, 0); rt_w32(G_MEM, c->esp + 4, slot); rt_w32(G_MEM, c->esp + 8, 0);
+            c->esp -= 4; rt_w32(G_MEM, c->esp, 0);
+            imp_dsound_DirectSoundCreate(c); uint32_t r = c->eax, o = rt_r32(G_MEM, slot); c->esp = esp0;
+            if (out) rt_w32(G_MEM, out, r ? 0 : o);
+            RET(r, 5);
+        }
+    }
     const uint8_t *g = GP(clsid);
     fprintf(stderr, "w32: CoCreateInstance({%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}) -> class not registered\n", rt_r32(G_MEM, clsid),
             rt_r16(G_MEM, clsid + 4), rt_r16(G_MEM, clsid + 6), g[8], g[9], g[10], g[11], g[12], g[13], g[14], g[15]);

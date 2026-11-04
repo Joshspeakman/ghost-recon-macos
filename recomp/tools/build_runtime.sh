@@ -8,6 +8,8 @@ EDITION_FLAGS=()
 [[ -f "$OUT/Df.exe" ]] && EDITION_FLAGS=(-DDF_EDITION -DDF1_EDITION)
 [[ -f "$OUT/Df2.exe" ]] && EDITION_FLAGS=(-DDF_EDITION -DDF2_EDITION)
 [[ -f "$OUT/gta3.exe" ]] && EDITION_FLAGS=(-DGTA3_EDITION)
+[[ -f "$OUT/gta-vc.exe" ]] && EDITION_FLAGS=(-DGTAVC_EDITION)
+[[ -f "$OUT/gta_sa.exe" ]] && EDITION_FLAGS=(-DGTASA_EDITION)
 SAN=(); [[ -n "${DF_SANITIZE:-}" ]] && SAN=(-fsanitize="$DF_SANITIZE" -fno-omit-frame-pointer)   # development: e.g. DF_SANITIZE=address
 INC=(-I "$HERE/runtime" -I "$HERE/runtime/win32" -I "$HERE/third_party/mojoshader" -I "$HERE/third_party/minimp3" -I "$HERE/third_party/vulkan/include")
 # Check every compiler status before linking; bound parallel work on macOS.
