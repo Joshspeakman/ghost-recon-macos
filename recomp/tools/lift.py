@@ -27,7 +27,7 @@ HOOKS = {                 # address: description (runtime/win32/hooks.c rt_hook)
 }
 JUNK = {'in', 'out', 'insb', 'insd', 'insw', 'outsb', 'outsd', 'outsw', 'iretd', 'hlt', 'cli', 'sti', 'int1', 'into',
         'int', 'aaa', 'aas', 'aam', 'aad', 'daa', 'das', 'salc', 'lds', 'retf', 'ljmp', 'lcall', 'arpl', 'bound',
-        'bndldx', 'bndstx', 'bndmov', 'bndcl', 'bndcu', 'bndmk', 'bnd call', 'bnd jmp', 'bnd ret', 'fbstp', 'fbld',
+        'bndldx', 'bndstx', 'bndmov', 'bndcl', 'bndcu', 'bndmk', 'bnd call', 'bnd jmp', 'bnd ret',
         'ud2', 'int3', 'sysenter', 'syscall', 'lock', 'wait'}
 
 # Functions a native implementation can take over (runtime/win32/hooks.c rt_override): at the function's first
