@@ -1,5 +1,5 @@
 /* GTA III: the launch window's Resolution. psSelectDevice (0x582970) takes the video mode saved in gta3.set (the menu's
- * m_nPrefsVideoMode, 0x906c10) when it is a usable one, else looks for 640x480. GTA3_MODE=WxH (host/gta3_launcher.m)
+ * m_nPrefsVideoMode, 0x906c10) when it is a usable one, else looks for 640x480. GTA_MODE=WxH (host/gta3_launcher.m)
  * puts RenderWare's index of that 32-bit full-screen mode there first (tools/lift.py GTA3_HOOKS), so the game opens
  * at it and its Display Setup shows it; without the variable the saved choice stands ("As Set in Game"). */
 #include "w32.h"
@@ -24,7 +24,7 @@ static uint32_t guest_call(Ctx *c, uint32_t fn, int n, const uint32_t *args)
 
 static void pick_mode(Ctx *c)
 {
-    static int done; const char *e = getenv("GTA3_MODE"); unsigned w, h;
+    static int done; const char *e = getenv("GTA_MODE"); unsigned w, h;
     if (done || !e || sscanf(e, "%ux%u", &w, &h) != 2) return;
     done = 1;
     uint32_t buf = (c->esp - 0x400) & ~15u, n = guest_call(c, RW_NUM_MODES, 0, 0);   /* scratch well below the frame */

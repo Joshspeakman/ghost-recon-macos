@@ -1258,8 +1258,8 @@ static int modes(uint32_t (*out)[2])                    /* the standard sizes th
     for (unsigned k = 0; k < sizeof std / sizeof *std; k++) if (std[k][0] <= sw && std[k][1] <= sh && !(std[k][0] == sw && std[k][1] == sh)) { out[n][0] = std[k][0]; out[n][1] = std[k][1]; n++; }
     out[n][0] = sw; out[n][1] = sh; n++;
 #ifdef GTA3_EDITION
-    {   /* the launch window's mode (GTA3_MODE, gta3_mode.c): a 4:3 one the height of the display, in points or pixels */
-        unsigned gw, gh; const char *e = getenv("GTA3_MODE");
+    {   /* the launch window's mode (GTA_MODE, gta3_mode.c): a 4:3 one the height of the display, in points or pixels */
+        unsigned gw, gh; const char *e = getenv("GTA_MODE");
         if (e && sscanf(e, "%ux%u", &gw, &gh) == 2 && gw >= 640 && gh >= 480 && n < DS_DISPLAY_MODE_CAP) {
             int have = 0; for (int k = 0; k < n; k++) have |= out[k][0] == gw && out[k][1] == gh;
             if (!have) { out[n][0] = gw; out[n][1] = gh; n++; }

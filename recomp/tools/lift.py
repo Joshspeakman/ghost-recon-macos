@@ -202,7 +202,7 @@ def df_moved(features, edition):
 
 # GTA III: native additions (runtime/win32/gta3_mode.c gta3_hook)
 GTA3_HOOKS = {
-    0x005829f8: 'psSelectDevice: the launch window\'s video mode (GTA3_MODE) before the saved one is read',
+    0x005829f8: 'psSelectDevice: the launch window\'s video mode (GTA_MODE) before the saved one is read',
 }
 
 def df_table(features, edition):
