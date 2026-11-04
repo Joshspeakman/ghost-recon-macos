@@ -9,12 +9,14 @@ NAME=DungeonSiegeNative; EDITION_FLAGS=()
 [[ -f "$OUT/Df.exe" ]] && { NAME=DeltaForce; EDITION_FLAGS=(-DDF_EDITION -DDF1_EDITION); }
 [[ -f "$OUT/Df2.exe" ]] && { NAME=DeltaForce2; EDITION_FLAGS=(-DDF_EDITION -DDF2_EDITION); }
 [[ -f "$OUT/gta3.exe" ]] && { NAME=GTA3; EDITION_FLAGS=(-DGTA3_EDITION); }
+[[ -f "$OUT/gta-vc.exe" ]] && { NAME=GTAVC; EDITION_FLAGS=(-DGTAVC_EDITION); }
+[[ -f "$OUT/gta_sa.exe" ]] && { NAME=GTASA; EDITION_FLAGS=(-DGTASA_EDITION); }
 SAN=(); [[ -n "${DF_SANITIZE:-}" ]] && SAN=(-fsanitize="$DF_SANITIZE" -fno-omit-frame-pointer)   # development (build_runtime.sh)
 mkdir -p "$APP" "$OUT/obj/host"
 BUILD="$(git -C "$HERE" describe --always --dirty 2>/dev/null || echo unknown)"
 clang -c -O2 -fobjc-arc -Wall -Wno-unused-function ${SAN[@]+"${SAN[@]}"} "${EDITION_FLAGS[@]}" -I "$HERE/runtime" -DDS_BUILD="\"$BUILD\"" -o "$OUT/obj/host/main.o" "$HERE/host/main.m"
 clang -c -O2 -fobjc-arc -Wall -Wno-unused-function -o "$OUT/obj/host/renderer.o" "$ROOT/src/renderer/renderer.m"
-LAUNCHER=launcher.m; [[ -f "$OUT/gta3.exe" ]] && LAUNCHER=gta3_launcher.m   # GTA III: its own launch window
+LAUNCHER=launcher.m; [[ -f "$OUT/gta3.exe" || -f "$OUT/gta-vc.exe" || -f "$OUT/gta_sa.exe" ]] && LAUNCHER=gta3_launcher.m   # the GTA games: their launch window
 clang -c -O2 -fobjc-arc -Wall -Wno-unused-function "${EDITION_FLAGS[@]}" -o "$OUT/obj/host/launcher.o" "$HERE/host/$LAUNCHER"
 MOJO=(); [[ -d "$OUT/obj/rt/mojo" ]] && MOJO=("$OUT"/obj/rt/mojo/*.o)
 clang ${SAN[@]+"${SAN[@]}"} -o "$APP/$NAME" "$OUT"/obj/*.o "$OUT"/obj/rt/*.o "${MOJO[@]}" "$OUT"/obj/host/*.o \

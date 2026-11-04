@@ -1,7 +1,11 @@
 /* Address-specific hooks and user-data names must follow the compiled executable. */
 #ifndef DS2_EDITION_H
 #define DS2_EDITION_H
-#ifdef GTA3_EDITION
+#if defined(GTA3_EDITION) || defined(GTAVC_EDITION) || defined(GTASA_EDITION)
+#define GTA_EDITION 1   /* what the three Grand Theft Auto games share (launcher, window, video mode) */
+#endif
+#ifdef GTA_EDITION
+#if defined(GTA3_EDITION)
 /* Grand Theft Auto III (the Mac Steam release, app 12230: gta3.exe 1.1 from TransGaming's Cider wrapper, unwrapped by
  * tools/steamstub21.py): RenderWare on Direct3D 8; no Dungeon Siege hooks */
 #define DS2_IMAGE_END 0x009ea000u
@@ -9,6 +13,23 @@
 #define DS2_DOCUMENTS "GTA3 User Files"
 #define DS2_INI "gta3.ini"
 #define GAME_EXE "gta3.exe"
+#elif defined(GTAVC_EDITION)
+/* Grand Theft Auto: Vice City (the Mac Steam release, app 12240: gta-vc.exe from the Cider wrapper, SecuROM undone
+ * locally by tools/securom_vc.py): RenderWare on Direct3D 8 */
+#define DS2_IMAGE_END 0x0167b000u
+#define DS2_TITLE "Grand Theft Auto: Vice City"
+#define DS2_DOCUMENTS "GTA Vice City User Files"
+#define DS2_INI "gta-vc.ini"
+#define GAME_EXE "gta-vc.exe"
+#else
+/* Grand Theft Auto: San Andreas (the Mac Steam release, app 12250: gta_sa.exe 3.0 from the Cider wrapper, unwrapped
+ * by tools/steamstub21.py): RenderWare on Direct3D 9, DirectSound, Ogg Vorbis; msvcr71/msvcp71 recompiled with it */
+#define DS2_IMAGE_END 0x00d1f000u
+#define DS2_TITLE "Grand Theft Auto: San Andreas"
+#define DS2_DOCUMENTS "GTA San Andreas User Files"
+#define DS2_INI "gta_sa.ini"
+#define GAME_EXE "gta_sa.exe"
+#endif
 #define DS2_LIGHT_LOOP 0xffffff00u
 #define DS2_LIGHT_AFTER 0xffffff01u
 #define DS2_LIGHT_ZERO 0u

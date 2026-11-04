@@ -1220,7 +1220,7 @@ def main():
     ap.add_argument('--per-file', type=int, default=400)
     ap.add_argument('--imp-base', type=int, default=0, help='index of this image\'s first import in the global import table')
     ap.add_argument('--tag', default='', help='multi-image builds: file name prefix; tables come from tools/link_tables.py')
-    ap.add_argument('--game', default='ds2', choices=('ds2', 'fnv', 'sims', 'df1', 'df2', 'gta3'), help='which executable: HOOKS/OVERRIDES are Dungeon Siege II addresses')
+    ap.add_argument('--game', default='ds2', choices=('ds2', 'fnv', 'sims', 'df1', 'df2', 'gta3', 'gtavc', 'gtasa'), help='which executable: HOOKS/OVERRIDES are Dungeon Siege II addresses')
     a = ap.parse_args()
     L = Lifter(a.exe, a.analysis); L.jt_cache = {}
     L.imp_index = {va: a.imp_base + k for k, (va, _) in enumerate(L.imports)}
@@ -1231,8 +1231,8 @@ def main():
     L.overrides = {} if a.tag else dict(OVERRIDES)
     if not a.tag:
         from editions import identify, PROFILES
-        edition = a.game if a.game in ('fnv', 'sims', 'df1', 'df2', 'gta3') else identify(a.exe, prepared=True)
-        if edition in ('fnv', 'sims', 'df1', 'df2', 'gta3'):      # Fallout: New Vegas, The Sims, Delta Force, GTA III: none of the DS2 hooks apply
+        edition = a.game if a.game in ('fnv', 'sims', 'df1', 'df2', 'gta3', 'gtavc', 'gtasa') else identify(a.exe, prepared=True)
+        if edition in ('fnv', 'sims', 'df1', 'df2', 'gta3', 'gtavc', 'gtasa'):      # Fallout: New Vegas, The Sims, Delta Force, GTA III: none of the DS2 hooks apply
             L.hooks = df_table(DF_HOOKS, edition) if edition in ('df1', 'df2') else dict(GTA3_HOOKS) if edition == 'gta3' else {}
             L.overrides = df_table(DF_OVERRIDES, edition) if edition in ('df1', 'df2') else {}
         if edition == 'sims':

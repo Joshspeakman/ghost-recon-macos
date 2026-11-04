@@ -835,7 +835,12 @@ TODO_M(dv_CreateAdditionalSwapChain, 3, D3DERR_INVALIDCALL)
 M(dv_GetSwapChain, 3) DEV_ME if (ARG(1)) RET(D3DERR_INVALIDCALL, 3); rt_w32(G_MEM, ARG(2), me->g_swap); me->ref++; RET(D3D_OK, 3); END
 M(dv_GetNumberOfSwapChains, 1) RET(1, 1); END
 static uint32_t dev_reset(Dev9 *d, uint32_t pp);
+#ifdef GTA_EDITION
+static void fullscreen_window9(Ctx *c, uint32_t pp, uint32_t focus);
+M(dv_Reset, 2) DEV_ME fullscreen_window9(c, ARG(1), me->hwnd); RET(dev_reset(me, ARG(1)), 2); END
+#else
 M(dv_Reset, 2) DEV_ME RET(dev_reset(me, ARG(1)), 2); END
+#endif
 static void cursor_overlay(Dev9 *d);
 static void dev_present(Ctx *c, Dev9 *d)
 {
@@ -1257,7 +1262,7 @@ static int modes(uint32_t (*out)[2])                    /* the standard sizes th
     int n = 0; uint32_t sw = (uint32_t)w32_screen_w, sh = (uint32_t)w32_screen_h;
     for (unsigned k = 0; k < sizeof std / sizeof *std; k++) if (std[k][0] <= sw && std[k][1] <= sh && !(std[k][0] == sw && std[k][1] == sh)) { out[n][0] = std[k][0]; out[n][1] = std[k][1]; n++; }
     out[n][0] = sw; out[n][1] = sh; n++;
-#ifdef GTA3_EDITION
+#ifdef GTA_EDITION
     {   /* the launch window's mode (GTA_MODE, gta3_mode.c): a 4:3 one the height of the display, in points or pixels */
         unsigned gw, gh; const char *e = getenv("GTA_MODE");
         if (e && sscanf(e, "%ux%u", &gw, &gh) == 2 && gw >= 640 && gh >= 480 && n < DS_DISPLAY_MODE_CAP) {
@@ -1330,7 +1335,20 @@ static void fill_caps(uint32_t out)                    /* D3DCAPS9: a Radeon 850
 M(d9_GetDeviceCaps, 4) fill_caps(ARG(3)); RET(D3D_OK, 4); END
 M(d9_GetAdapterMonitor, 2) RET(0x0001beef, 2); END
 static void init_vtables9(void);
+#ifdef GTA_EDITION
+/* full screen (Windowed = FALSE): the window takes the mode's size, as Windows does; RenderWare checks that its
+ * client rectangle matches the back buffer before it makes its camera (the Direct3D 8 games: d3d8.inc) */
+void w32_window_fullscreen(Ctx *c, uint32_t hwnd, int w, int h);
+static void fullscreen_window9(Ctx *c, uint32_t pp, uint32_t focus)
+{
+    uint32_t v[14]; memcpy(v, GP(pp), 56);
+    if (!v[8]) w32_window_fullscreen(c, v[7] ? v[7] : focus, (int)(v[0] ? v[0] : (uint32_t)w32_screen_w), (int)(v[1] ? v[1] : (uint32_t)w32_screen_h));
+}
+#endif
 M(d9_CreateDevice, 7) ME(D3D9, O9_D3D)                 /* (adapter, type, focus window, behaviour, present parameters, device *) */
+#ifdef GTA_EDITION
+    fullscreen_window9(c, ARG(5), ARG(3));
+#endif
     if (the_dev) { fprintf(stderr, "d3d9: a second device: the first one is reused\n"); dev_reset(the_dev, ARG(5)); rt_w32(G_MEM, ARG(6), the_dev->g); the_dev->ref++; RET(D3D_OK, 7); }
     Dev9 *d = calloc(1, sizeof *d); d->ref = 1; d->g_d3d = me->g; d->hwnd = ARG(3); d->behavior = ARG(4);
     d->g = make_iface(O9_DEV, d); d->g_swap = make_iface(O9_SWAP, d); the_dev = d;

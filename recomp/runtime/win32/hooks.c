@@ -59,7 +59,7 @@ void rt_hook(Ctx *c, uint32_t addr)
 #ifdef DF_EDITION
     if (df_hook(c, addr)) return;
 #endif
-#ifdef GTA3_EDITION
+#ifdef GTA_EDITION
     { int gta3_hook(Ctx *, uint32_t); if (gta3_hook(c, addr)) return; }   /* gta3_mode.c */
 #endif
     switch (addr) {
@@ -124,7 +124,7 @@ int rt_override(Ctx *c, uint32_t addr)
          * game when it can't; the port writes its own crash reports. cdecl (url, handler path, database name). */
         c->eax = 0; c->esp += 4;
         return 1;
-#elif defined(DF_EDITION) || defined(GTA3_EDITION)
+#elif defined(DF_EDITION) || defined(GTA_EDITION)
     case 0xffffffffu: break;
 #else
     case 0x007663b0u: return keep_multiplayer_button(c);

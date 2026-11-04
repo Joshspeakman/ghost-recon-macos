@@ -349,6 +349,16 @@ uint32_t w32_export(uint32_t base, const char *name, uint32_t ordinal)
     return 0;
 }
 static int load_image(int k);
+/* is the address inside an executable section of the image at base? (an export is code or a variable) */
+static int in_code(uint32_t base, uint32_t a)
+{
+    uint32_t pe = base + rt_r32(G_MEM, base + 0x3c), n = rt_r16(G_MEM, pe + 6), sh = pe + 24 + rt_r16(G_MEM, pe + 20);
+    for (uint32_t k = 0; k < n; k++, sh += 40) {
+        uint32_t va = base + rt_r32(G_MEM, sh + 12), vs = rt_r32(G_MEM, sh + 8), fl = rt_r32(G_MEM, sh + 36);
+        if (a >= va && a - va < (vs ? vs : rt_r32(G_MEM, sh + 16))) return (fl & 0x20000000u) != 0;
+    }
+    return 1;
+}
 /* resolve image k's imports: into another recompiled image's exports where one exists */
 static void bind_imports(int k)
 {
@@ -363,7 +373,11 @@ static void bind_imports(int k)
         if (t > 0 && load_image(t) == 0) {
             image_ref[t] = 1;
             uint32_t a = bang[1] == '#' ? w32_export(rt_images[t].base, 0, (uint32_t)atoi(bang + 2)) : w32_export(rt_images[t].base, bang + 1, 0);
-            if (a) thunk_target[j] = a; else fprintf(stderr, "w32: %s not exported by %s\n", bang + 1, rt_images[t].name);
+            if (a) {
+                thunk_target[j] = a;
+                if (!in_code(rt_images[t].base, a)) rt_w32(G_MEM, rt_imptab[j].iat, a);   /* a variable (msvcr71's _iob, _adjust_fdiv):
+                                                                                             its address, read through the slot */
+            } else fprintf(stderr, "w32: %s not exported by %s\n", bang + 1, rt_images[t].name);
         }
     }
 }

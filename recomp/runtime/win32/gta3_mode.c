@@ -3,7 +3,9 @@
  * puts RenderWare's index of that 32-bit full-screen mode there first (tools/lift.py GTA3_HOOKS), so the game opens
  * at it and its Display Setup shows it; without the variable the saved choice stands ("As Set in Game"). */
 #include "w32.h"
+#include "edition.h"
 
+#ifdef GTA_EDITION
 #ifdef GTA3_EDITION
 enum { PICK_MODE = 0x005829f8u,             /* psSelectDevice: just before the saved mode is read */
        RW_NUM_MODES = 0x005a2460u,          /* RwEngineGetNumVideoModes(void) */
@@ -43,4 +45,7 @@ int gta3_hook(Ctx *c, uint32_t addr)
     if (addr == PICK_MODE) { pick_mode(c); return 1; }
     return 0;
 }
+#else
+int gta3_hook(Ctx *c, uint32_t addr) { (void)c; (void)addr; return 0; }   /* Vice City, San Andreas: none yet */
+#endif
 #endif
