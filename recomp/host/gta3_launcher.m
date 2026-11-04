@@ -5,7 +5,7 @@
  * main.m calls ds_launcher_run() before the game: it returns 1 to play (the choices are then in the environment and in
  * <data>/launcher.plist; main.m starts the game in a fresh process with DS_NO_LAUNCHER=1), 0 to quit.
  *   DS_DISPLAY=window|fullscreen, DS_NOTCH=around|below   main.m (the game's window)
- *   GTA3_MODE=WxH                                        runtime/win32/gta3_mode.c (the game's video mode), d3d9.c modes()
+ *   GTA_MODE=WxH                                        runtime/win32/gta3_mode.c (the game's video mode), d3d9.c modes()
  *   DSR_VSYNC=1|0                                        main.m (the Metal layer)
  * Art: the data folder's art/ (or the app's Resources/art), fetched at install time by tools/gta3_art.py; without it the
  * title is written. Development: DS_LAUNCHER_SHOT=<png> renders the window to an image (DS_LAUNCHER_OPEN=1: the panel
@@ -392,7 +392,7 @@ static void apply(NSDictionary *c)
     setenv_soft("DS_NOTCH", [c[@"notch"] ?: @"below" UTF8String]);
     setenv_soft("DSR_VSYNC", [c[@"vsync"] ?: @"1" UTF8String]);
     NSString *m = mode_for(c[@"display"] ?: @"fullscreen", c[@"notch"] ?: @"below", c[@"resolution"] ?: @"standard");
-    if (m.length) setenv_soft("GTA3_MODE", m.UTF8String);
+    if (m.length) setenv_soft("GTA_MODE", m.UTF8String);
 }
 
 int ds_launcher_run(const char *game_dir, const char *data_dir)
