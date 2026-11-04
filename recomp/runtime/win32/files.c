@@ -54,6 +54,13 @@ static void resolve(const char *root, char **parts, int from, int np, char *out,
     }
     snprintf(out, cap, "%s", cur);
 }
+/* Windows drops trailing spaces and dots from each name in a path ("DATA\\DEFAULT.IDE " opens DEFAULT.IDE; GTA III's
+ * default.dat has such a line) */
+static char *win_trim(char *t)
+{
+    if (strcmp(t, ".") && strcmp(t, "..")) { size_t n = strlen(t); while (n && (t[n - 1] == ' ' || t[n - 1] == '.')) t[--n] = 0; }
+    return t;
+}
 /* Windows path -> host path. mode 0: read (overlay if present, else base); 1: create/write (overlay, copied up). */
 static int host_path(const char *win, char *out, size_t cap, int mode, const char *overlay, const char *layer)
 {
@@ -66,6 +73,7 @@ static int host_path(const char *win, char *out, size_t cap, int mode, const cha
     for (char *s = full; *s; s++) if (*s == '/') *s = '\\';
     char *save, *tok = strtok_r(full + 2, "\\", &save);
     while (tok) {
+        win_trim(tok);
         if (!strcmp(tok, "..")) { if (np) np--; }
         else if (strcmp(tok, ".") && *tok) { if (np == 256) return -1; parts[np++] = tok; }   /* too deep: no such path */
         tok = strtok_r(0, "\\", &save);
@@ -154,7 +162,7 @@ static void full_win_path(const char *in, char *out, size_t cap)
     char *parts[256]; int np = 0;
     for (char *s = tmp; *s; s++) if (*s == '/') *s = '\\';
     char drive = (char)(tmp[0] & ~32), *save, *tok = strtok_r(tmp + 2, "\\", &save);
-    while (tok) { if (!strcmp(tok, "..")) { if (np) np--; } else if (strcmp(tok, ".") && *tok && np < 256) parts[np++] = tok; tok = strtok_r(0, "\\", &save); }
+    while (tok) { win_trim(tok); if (!strcmp(tok, "..")) { if (np) np--; } else if (strcmp(tok, ".") && *tok && np < 256) parts[np++] = tok; tok = strtok_r(0, "\\", &save); }
     size_t k = (size_t)snprintf(out, cap, "%c:", drive);
     for (int j = 0; j < np && k < cap; j++) k += (size_t)snprintf(out + k, cap - k, "\\%s", parts[j]);   /* stops when full */
     if (k >= cap) return;
@@ -318,11 +326,25 @@ void w32_file_closed(HObj *o)
     if (o->type == H_FILE) { File *f = o->p; close(f->fd); free(f); }
     else if (o->type == H_MAPPING && !mapping_named(o->p)) w32_mapping_free(o->p);   /* views stay valid (mmap keeps the file) */
 }
+/* ReadFile/WriteFile with an OVERLAPPED (GTA III's CD-stream thread): the transfer is at the OVERLAPPED's offset
+ * (Offset +8, OffsetHigh +12), not the file pointer; it completes at once, so Internal (+0) = STATUS_SUCCESS,
+ * InternalHigh (+4) = bytes moved (GetOverlappedResult reads it), and its event (+16), if any, is set */
+int w32_event_set(uint32_t h);
+static ssize_t ov_io(uint32_t ov, int fd, void *p, uint32_t n, int write_)
+{
+    if (!ov) return write_ ? write(fd, p, n) : read(fd, p, n);
+    off_t off = (off_t)(((uint64_t)rt_r32(G_MEM, ov + 12) << 32) | rt_r32(G_MEM, ov + 8));
+    ssize_t r = write_ ? pwrite(fd, p, n, off) : pread(fd, p, n, off);
+    if (r >= 0) lseek(fd, off + r, SEEK_SET);                /* a synchronous handle's pointer moves past it */
+    rt_w32(G_MEM, ov, r >= 0 ? 0 : 0xc0000185u); rt_w32(G_MEM, ov + 4, r > 0 ? (uint32_t)r : 0);
+    if (rt_r32(G_MEM, ov + 16)) w32_event_set(rt_r32(G_MEM, ov + 16));
+    return r;
+}
 IMPL(kernel32, ReadFile)
 {
     HObj *o = h_get(ARG(0), H_FILE); uint32_t buf = ARG(1), n = ARG(2), rd = ARG(3);
     if (!o) { w32_set_last_error(c, 6); RET(0, 5); }
-    ssize_t r = read(((File *)o->p)->fd, GP(buf), n);
+    ssize_t r = ov_io(ARG(4), ((File *)o->p)->fd, GP(buf), n, 0);
     if (rd) rt_w32(G_MEM, rd, r > 0 ? (uint32_t)r : 0);
     RET(r >= 0, 5);
 }
@@ -330,7 +352,7 @@ IMPL(kernel32, WriteFile)
 {
     HObj *o = h_get(ARG(0), H_FILE); uint32_t buf = ARG(1), n = ARG(2), wr = ARG(3);
     if (!o) { w32_set_last_error(c, 6); RET(0, 5); }
-    ssize_t r = write(((File *)o->p)->fd, GP(buf), n);
+    ssize_t r = ov_io(ARG(4), ((File *)o->p)->fd, GP(buf), n, 1);
     if (wr) rt_w32(G_MEM, wr, r > 0 ? (uint32_t)r : 0);
     RET(r >= 0, 5);
 }
