@@ -506,6 +506,7 @@ static void window_created(uint32_t hwnd, int x, int y, int w, int h, uint32_t s
         f.origin = NSZeroPoint;
         win.title = @DS2_TITLE; win.backgroundColor = NSColor.blackColor; win.acceptsMouseMovedEvents = YES;
         GameView *v = [[GameView alloc] initWithFrame:NSMakeRect(0, 0, f.size.width, f.size.height - band)]; v.wantsLayer = YES;
+        v.layerContentsPlacement = NSViewLayerContentsPlacementScaleProportionallyToFit;   /* as a subview AppKit would stretch it */
         if (band > 0) {
             NSView *box = [[NSView alloc] initWithFrame:f]; box.wantsLayer = YES; box.layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
             v.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable; [box addSubview:v]; win.contentView = box;
@@ -716,7 +717,7 @@ static int bundle_launch(const char *argv0, const char **exe, const char **game,
         NSString *old = [[log stringByDeletingPathExtension] stringByAppendingString:@".old.log"];
         [fm removeItemAtPath:old error:nil]; [fm moveItemAtPath:log toPath:old error:nil];
     }
-    freopen(log.fileSystemRepresentation, "a", stderr);
+    freopen(log.fileSystemRepresentation, "a", stderr); setvbuf(stderr, NULL, _IOLBF, 0);   /* reopened stderr is fully buffered: lines lost at a kill */
     setenv("DS_LOG_FILE", log.fileSystemRepresentation, 1);                                      /* crash reports attach this log */
     NSString *upd = [bin stringByAppendingPathComponent:@"update"];
     if ([fm isExecutableFileAtPath:upd] && cfg[@"branch"]) {                                       /* the launcher's Updates row */
