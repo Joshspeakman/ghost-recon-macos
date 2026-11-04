@@ -52,6 +52,10 @@ void w32_reg_string(const char *path, const char *name, const char *str)
  *                   CDKey". Only the hash is kept, never the key. */
 void w32_registry_install(const char *data_dir)
 {
+    /* the user's Documents, as Windows records it (GTA III keeps "GTA3 User Files" there: settings, saves; without the
+     * value it falls back to its own data folder) */
+    w32_reg_string("hkcu\\software\\microsoft\\windows\\currentversion\\explorer\\shell folders", "Personal", "C:\\Users\\player\\Documents");
+    w32_reg_string("hkcu\\software\\microsoft\\windows\\currentversion\\explorer\\user shell folders", "Personal", "C:\\Users\\player\\Documents");
 #ifdef FNV_EDITION
     /* where Fallout NV (and its tools) look for the installation; the virtual game folder is the same for every game */
     w32_reg_string("hklm\\software\\bethesda softworks\\falloutnv", "Installed Path", "C:\\GOG Games\\Dungeon Siege\\");
