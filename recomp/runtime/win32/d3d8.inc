@@ -52,6 +52,8 @@ static void fill_caps8(uint32_t out)                   /* D3DCAPS8: the first 53
 {
     uint32_t tmp = gmem(304); fill_caps(tmp);
     rt_w32(G_MEM, tmp + 49 * 4, 0); rt_w32(G_MEM, tmp + 51 * 4, 0);   /* no shaders: RenderWare stays on the fixed-function path */
+    rt_w32(G_MEM, tmp + 12, rt_r32(G_MEM, tmp + 12) | 0x00080000u);   /* Caps2 D3DCAPS2_CANRENDERWINDOWED (Direct3D 8 only):
+                                                                      * Ghost Recon lists only adapters that have it */
     memcpy(GP(out), GP(tmp), 212); gfree_(tmp, 304);
 }
 M(d8_GetDeviceCaps, 4) fill_caps8(ARG(3)); RET(D3D_OK, 4); END
