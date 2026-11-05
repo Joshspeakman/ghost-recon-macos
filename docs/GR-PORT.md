@@ -41,6 +41,11 @@ chosen mode.
 - Direct3D 8 caps: `D3DCAPS2_CANRENDERWINDOWED` (dropped in Direct3D 9; Ghost Recon lists only adapters with it).
 - DirectSound: `IDirectSoundNotify` (the music/voice streams wait on notification events, set from the render
   callback as the play cursor passes them).
+- Direct3D 8 `CreateDevice` puts the calling thread's x87 in single precision (round to nearest, exceptions masked)
+  unless `D3DCREATE_FPU_PRESERVE`, as Windows does (Ghost Recon passes 0x44). The game's power-of-two test is
+  `trunc(ln(n) * 1/ln2) == log2(n)`: in double precision 8, 64 and 128 come out a hair under (6.999…), so with
+  mipmapping on a 256x128 image (character/allied/head.rsb) was taken for a non-power of two, got no mip images and
+  the copy read from address 0. `W32_NO_FPUSETUP=1` skips it (test switch, as for DirectDraw).
 - DirectInput 8 is fed by the Mac host (mouse motion, buttons, wheel, keys); it was only fed on Linux before.
 - Renderer (from gta-classics f270d68): Direct3D vertex lighting (characters, props: FVF with normals, lighting on)
   and per-stage texture-coordinate sets. Terrain is FVF `0x242` (two sets): stage 0 the map's colour layer on set 0,
@@ -67,7 +72,7 @@ Auto Assign 122,89. Escape in Training ends it.
 | Sound | music, effects and briefing voice play (DirectSound, EAX not offered) |
 | Movies | **skipped**: MS-MPEG-4 v2 (MP42) and Indeo 3.2 (IV32) AVIs, no decoder in the runtime yet |
 | Multiplayer | not tested |
-| Mipmapping option | crashes in the game's own mip code (character/allied/head.rsb): leave it off (the default) |
+| Mipmapping option | works (on for new installs); the game's MipMapLODBias is not applied by the renderer yet |
 
 Known cosmetic leftovers: the guest install path is `C:\GOG Games\Dungeon Siege` (shows in `IkeCrash.log`), log
 lines say `DungeonSiegeNative:`.

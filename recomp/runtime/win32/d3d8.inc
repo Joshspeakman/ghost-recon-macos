@@ -59,6 +59,12 @@ static void fill_caps8(uint32_t out)                   /* D3DCAPS8: the first 53
 M(d8_GetDeviceCaps, 4) fill_caps8(ARG(3)); RET(D3D_OK, 4); END
 M(d8_CreateDevice, 7) ME(D3D9, O9_D3D)                 /* (adapter, type, focus window, behaviour, present parameters, device *) */
     uint32_t pp = pp9_from8(ARG(5)); fullscreen_window(c, ARG(5), ARG(3));
+    /* as Windows' Direct3D: the calling thread's x87 goes to single precision, round to nearest, exceptions masked,
+     * unless D3DCREATE_FPU_PRESERVE (2). Ghost Recon's power-of-two test (ln(n) * 1/ln2, truncated) needs it: in
+     * double precision 128, 64 and 8 come out a hair under their log and are taken for non-powers of two (with
+     * mipmapping on, the image then has no mip levels to copy). W32_NO_FPUSETUP: test switch (as ddraw.c) */
+    if (!(ARG(4) & 2u) && !getenv("W32_NO_FPUSETUP")) rt_fcw_set(c, (c->fcw & ~0xf3fu) | 0x3fu);
+    if (getenv("D3D9_CREATELOG")) fprintf(stderr, "d3d8: CreateDevice behaviour %#x, fcw now %#x\n", ARG(4), c->fcw);
     if (the_dev) { dev_reset(the_dev, pp); rt_w32(G_MEM, ARG(6), the_dev->g); the_dev->ref++; RET(D3D_OK, 7); }
     Dev9 *d = calloc(1, sizeof *d); d->ref = 1; d->g_d3d = me->g; d->hwnd = ARG(3); d->behavior = ARG(4);
     d->g = make_iface(O9_DEV, d); d->g_swap = make_iface(O9_SWAP, d); the_dev = d;
