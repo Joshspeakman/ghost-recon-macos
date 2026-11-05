@@ -276,6 +276,7 @@ IMPL(wsock32, ord23)                                    /* socket(af, type, prot
     if (k < MAXS) { S[k].fd = fd + 1; S[k].nb = 0; S[k].connecting = 0; S[k].bound = 0; }
     pthread_mutex_unlock(&s_lock);
     if (k == MAXS) { close(fd); w32_set_last_error(c, 10024); RET(INVALID_SOCKET_, 3); }
+    if (getenv("W32_NETLOG")) fprintf(stderr, "net: socket %x (%s, fd %d)\n", SBASE + (uint32_t)k, type == 1 ? "tcp" : "udp", fd);
     RET(SBASE + (uint32_t)k, 3);
 }
 IMPL(wsock32, ord3)                                     /* closesocket(s) */
@@ -290,7 +291,19 @@ IMPL(wsock32, ord2)                                     /* bind(s, addr, len) */
 {
     SOCK(ARG(0), 3); struct sockaddr_in a; if (!to_host(ARG(1), ARG(2), &a)) RET(fail(c, 10014), 3);
     if (w32_netvirt()) { uint16_t vp = ntohs(a.sin_port); if (!vp) { pthread_mutex_lock(&s_lock); vp = (uint16_t)vnext++; pthread_mutex_unlock(&s_lock); } vlocal(&a, vp); }
-    if (bind(fd, (struct sockaddr *)&a, sizeof a)) RET(fail_errno(c), 3);
+    /* an address that isn't this Mac's: gethostbyname lists the router's public address first (for players over the
+     * internet, net_ole.c), and Ghost Recon binds its game sockets to the first one; on Windows behind a router that
+     * would have been a local address. Bound to every local address instead, the game is reachable as there. */
+    int r = bind(fd, (struct sockaddr *)&a, sizeof a);
+    if (r && errno == EADDRNOTAVAIL && a.sin_addr.s_addr != htonl(INADDR_ANY)) {
+        if (getenv("W32_NETLOG")) { char ip[32]; inet_ntop(AF_INET, &a.sin_addr, ip, sizeof ip); fprintf(stderr, "net: bind %x: %s is not local, binding to any\n", ARG(0), ip); }
+        a.sin_addr.s_addr = htonl(INADDR_ANY); r = bind(fd, (struct sockaddr *)&a, sizeof a);
+    }
+    if (r) {
+        if (getenv("W32_NETLOG")) { char ip[32]; inet_ntop(AF_INET, &a.sin_addr, ip, sizeof ip); fprintf(stderr, "net: bind %x to %s:%u failed: %s\n", ARG(0), ip, ntohs(a.sin_port), strerror(errno)); }
+        RET(fail_errno(c), 3);
+    }
+    if (getenv("W32_NETLOG")) { char ip[32]; inet_ntop(AF_INET, &a.sin_addr, ip, sizeof ip); fprintf(stderr, "net: bind %x to %s:%u\n", ARG(0), ip, ntohs(a.sin_port)); }
     pthread_mutex_lock(&s_lock); S[ARG(0) - SBASE].bound = 1;
     { struct sockaddr_in g = {0}; socklen_t gl = sizeof g; int type = 0; socklen_t tl = sizeof type;
       getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &tl);
@@ -305,6 +318,10 @@ IMPL(wsock32, ord4)                                     /* connect(s, addr, len)
 {
     SOCK(ARG(0), 3); struct sockaddr_in a; if (!to_host(ARG(1), ARG(2), &a)) RET(fail(c, 10014), 3);
     if (getenv("W32_NETLOG")) { char ip[32]; inet_ntop(AF_INET, &a.sin_addr, ip, sizeof ip); fprintf(stderr, "net: connect %x to %s:%u (fd %d)\n", ARG(0), ip, ntohs(a.sin_port), fd); }
+    if (w32_netvirt()) {                                  /* 127.0.0.j: copy j's port range (Ghost Recon joins over TCP) */
+        uint32_t d = ntohl(a.sin_addr.s_addr), k = d & 255;
+        if ((d >> 8) == 0x7f0000u && k >= 1 && k <= 9) { a.sin_addr.s_addr = htonl(INADDR_LOOPBACK); a.sin_port = htons(vreal((int)k, ntohs(a.sin_port))); }
+    }
     if (connect(fd, (struct sockaddr *)&a, sizeof a)) {
         int e = errno;
         if (e == EINPROGRESS) { pthread_mutex_lock(&s_lock); S[ARG(0) - SBASE].connecting = 1; pthread_mutex_unlock(&s_lock); }
@@ -323,7 +340,13 @@ IMPL(wsock32, ord1)                                     /* accept(s, addr, len*)
     if (k < MAXS) { S[k].fd = n + 1; S[k].nb = 0; S[k].connecting = 0; S[k].bound = 1; }   /* the OS bound it (a reused slot kept the old flag) */
     pthread_mutex_unlock(&s_lock);
     if (k == MAXS) { close(n); w32_set_last_error(c, 10024); RET(INVALID_SOCKET_, 3); }
-    fcntl(n, F_SETFL, fcntl(n, F_GETFL) & ~O_NONBLOCK);  /* Windows: the new socket starts blocking */
+    {   /* Windows: the new socket has the listening socket's properties, non-blocking mode included (Ghost Recon's host
+         * polls its players' connections with recv; made blocking, the host stopped in the first recv once a player
+         * joined) */
+        int lnb = fcntl(fd, F_GETFL) & O_NONBLOCK, fl = fcntl(n, F_GETFL);
+        fcntl(n, F_SETFL, lnb ? fl | O_NONBLOCK : fl & ~O_NONBLOCK);
+        if (getenv("W32_NETLOG")) fprintf(stderr, "net: accept %x -> %x (%s)\n", ARG(0), SBASE + (uint32_t)k, lnb ? "non-blocking" : "blocking");
+    }
     to_guest(&a, ARG(1), ARG(2));
     RET(SBASE + (uint32_t)k, 3);
 }
