@@ -23,6 +23,7 @@ typedef struct {   // must match shaders.metal Uniforms
     float amb[4], md[4], ma[4], ms[4], me[4];   // D3DRS_AMBIENT; material diffuse, ambient, specular, emissive
     int32_t lit[4];      // lighting on, lights, material sources, normalize normals
     int32_t tg[4];       // local viewer, specular on
+    float lod[4];        // stage 0/1 mip LOD bias
     float lt[8 * 7][4];  // lights in camera space (see shaders.metal)
 } Uniforms;
 
@@ -407,7 +408,11 @@ static id<MTLDepthStencilState> depth_for(DSRRenderer *r)
 static id<MTLSamplerState> sampler_for(DSRRenderer *r, int st)
 {
     uint32_t au = r->tss[st][13], av = r->tss[st][14], mag = r->tss[st][16], min = r->tss[st][17], mip = r->tss[st][18];
-    uint32_t key = ((au << 16) | (av << 12) | (mag << 8) | (min << 4) | mip) << 1 | 1, h = (key * 2654435761u) >> 22;
+    static int force = -1; if (force < 0) { const char *e = getenv("DSR_ANISO"); force = e ? atoi(e) : 16; if (force < 1) force = 1; if (force > 16) force = 16; }
+    uint32_t an = (min == 3 || mag == 3) ? (r->tss[st][21] < 1 ? 1 : r->tss[st][21] > 16 ? 16 : r->tss[st][21]) : 1;   // D3DTEXF_ANISOTROPIC: MAXANISOTROPY
+    if (mip >= 2 && min >= 2 && an < (uint32_t)force) an = (uint32_t)force;   /* mipmapped, filtered: anisotropic (DSR_ANISO=n, 1 off; default 16):
+                                                                                 * ground seen at a slant keeps its detail instead of the mips' blur */
+    uint32_t key = ((an << 20) | (au << 16) | (av << 12) | (mag << 8) | (min << 4) | mip) << 1 | 1, h = (key * 2654435761u) >> 22;
     while (r->smp_k[h] && r->smp_k[h] != key) h = (h + 1) & 1023;
     if (r->smp_k[h]) return r->smp_v[h];
     id<MTLSamplerState> s;
@@ -415,6 +420,7 @@ static id<MTLSamplerState> sampler_for(DSRRenderer *r, int st)
     MTLSamplerAddressMode (^am)(uint32_t) = ^MTLSamplerAddressMode(uint32_t a) { return a == 2 ? MTLSamplerAddressModeMirrorRepeat : a == 3 ? MTLSamplerAddressModeClampToEdge : a == 4 ? MTLSamplerAddressModeClampToBorderColor : MTLSamplerAddressModeRepeat; };
     d.sAddressMode = am(au); d.tAddressMode = am(av);
     d.magFilter = mag >= 2 ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest; d.minFilter = min >= 2 ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
+    d.maxAnisotropy = an;
     d.mipFilter = mip == 3 ? MTLSamplerMipFilterLinear : mip == 2 ? MTLSamplerMipFilterNearest : MTLSamplerMipFilterNotMipmapped;
     s = [r->dev newSamplerStateWithDescriptor:d]; if (r->smp_n < 768) { r->smp_k[h] = key; r->smp_v[h] = s; r->smp_n++; } return s;
 }
@@ -508,6 +514,8 @@ static void draw(DSRRenderer *r, const uint32_t *p, uint32_t size)
     u.at[0] = (r->rs[24] & 255) / 255.0f; u.at[1] = r->rs[25]; u.at[2] = r->rs[15] ? 1 : 0;
     Surf *t0 = surf(r, r->tex[0]), *t1 = surf(r, r->tex[1]);
     u.misc[0] = (fvf & 0xe) == 4; u.misc[1] = (fvf & 0x40) != 0; u.misc[2] = t0 != NULL; u.misc[3] = t1 != NULL;
+    memcpy(&u.lod[0], &r->tss[0][19], 4); memcpy(&u.lod[1], &r->tss[1][19], 4);   // D3DTSS_MIPMAPLODBIAS (a float)
+    for (int k = 0; k < 2; k++) if (!(u.lod[k] >= -16 && u.lod[k] <= 16)) u.lod[k] = 0;
     normal_matrix(u.nrm, wv); u.tg[0] = r->rs[142] != 0; u.tg[1] = r->rs[29] != 0;
     if (r->ff_light && r->rs[137] && !u.misc[0]) ff_lighting(r, &u, fvf);
     { static int w; uint32_t g0 = r->tss[0][11] >> 16, g1 = r->tss[1][11] >> 16;   /* texgen modes not done: sphere maps */

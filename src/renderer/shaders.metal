@@ -25,6 +25,7 @@ struct Uniforms {
     float4 md, ma, ms, me;   // the material: diffuse, ambient, specular, emissive (after D3DRS_*MATERIALSOURCE)
     int4 lit;            // lighting on, lights, material sources (diffuse | ambient << 4 | emissive << 8: 0 material, 1 colour 1, 2 colour 2), normalize normals
     int4 tg;             // local viewer, specular on (D3DRS_SPECULARENABLE), unused x2
+    float4 lod;          // stage 0/1 D3DTSS_MIPMAPLODBIAS (Ghost Recon: -0.5, a little sharper), unused x2
     float4 lt[8 * 7];    // each light (camera space): diffuse, ambient, position (w type), direction, attenuation 0-2 + range, spot (cos theta/2, cos phi/2, falloff), specular
 };
 
@@ -174,14 +175,14 @@ fragment float4 fs_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(1)]]
     float4 diffuse = in.diffuse, current = diffuse;
     float2 uv0 = in.uv;
     if ((u.a0.z & 0xffff0000) == 0x20000) uv0 = (u.a0.w & 0x100) ? in.tcproj.xy / in.tcproj.z : in.tcproj.xy;   // TCI_CAMERASPACEPOSITION
-    float4 texel = u.misc.z ? t0.sample(s0, uv0) : float4(1);
+    float4 texel = u.misc.z ? t0.sample(s0, uv0, bias(u.lod.x)) : float4(1);
     if (u.xrgb.x) texel.a = 1;
     if (u.c0.x != 1) {
         float4 c = op(u.c0.x, arg(u.c0.y, diffuse, current, texel, u.tfactor), arg(u.c0.z, diffuse, current, texel, u.tfactor), diffuse, texel, u.tfactor, current);
         float4 a = u.c0.w == 1 ? current : op(u.c0.w, arg(u.a0.x, diffuse, current, texel, u.tfactor), arg(u.a0.y, diffuse, current, texel, u.tfactor), diffuse, texel, u.tfactor, current);
         current = float4(c.rgb, a.a);
         if (u.c1.x != 1) {
-            float4 texel1 = u.misc.w ? t1.sample(s1, in.uv1) : float4(1);
+            float4 texel1 = u.misc.w ? t1.sample(s1, in.uv1, bias(u.lod.y)) : float4(1);
             if (u.xrgb.y) texel1.a = 1;
             float4 c1 = op(u.c1.x, arg(u.c1.y, diffuse, current, texel1, u.tfactor), arg(u.c1.z, diffuse, current, texel1, u.tfactor), diffuse, texel1, u.tfactor, current);
             float4 a1 = u.c1.w == 1 ? current : op(u.c1.w, arg(u.a1.x, diffuse, current, texel1, u.tfactor), arg(u.a1.y, diffuse, current, texel1, u.tfactor), diffuse, texel1, u.tfactor, current);
