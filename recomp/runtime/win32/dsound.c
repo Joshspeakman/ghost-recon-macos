@@ -206,7 +206,7 @@ static void b_SetFormat(Ctx *c)
     set_format(b, ARG(1)); LOG("format %d Hz %d bits %d ch (%s)\n", b->rate, b->bits, b->ch, b->primary ? "primary" : "secondary");
     RET(DS_OK, 2);
 }
-static void b_SetVolume(Ctx *c) { Buf *b = B(ARG(0)); if (!b) RET(DSERR_INVALIDPARAM, 2); b->vol = (int32_t)ARG(1); set_gain(b); RET(DS_OK, 2); }
+static void b_SetVolume(Ctx *c) { Buf *b = B(ARG(0)); if (!b) RET(DSERR_INVALIDPARAM, 2); b->vol = (int32_t)ARG(1); set_gain(b); LOG("volume %d\n", b->vol); RET(DS_OK, 2); }
 static void b_SetPan(Ctx *c) { Buf *b = B(ARG(0)); if (!b) RET(DSERR_INVALIDPARAM, 2); b->pan = (int32_t)ARG(1); set_gain(b); RET(DS_OK, 2); }
 static void b_SetFrequency(Ctx *c) { Buf *b = B(ARG(0)); if (!b) RET(DSERR_INVALIDPARAM, 2); b->freq = ARG(1); RET(DS_OK, 2); }
 static void b_Stop(Ctx *c)
