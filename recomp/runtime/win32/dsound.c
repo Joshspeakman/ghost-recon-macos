@@ -7,7 +7,9 @@
  * fragment mixer expects.
  *
  * Each buffer's guest object holds three interface pointers, each followed by the buffer's index: +0 the buffer
- * (IDirectSoundBuffer8), +8 its IDirectSound3DBuffer (the primary buffer's: IDirectSound3DListener), +16 its effect. */
+ * (IDirectSoundBuffer8), +8 its IDirectSound3DBuffer (the primary buffer's: IDirectSound3DListener), +16 its effect,
+ * +24 its IDirectSoundNotify (Ghost Recon's streams: events set from the render callback as the play cursor passes
+ * each notification offset; DSBPN_OFFSETSTOP ones on Stop and at a one-shot buffer's end). */
 #include "w32.h"
 #include "host_audio.h"
 #include <math.h>
@@ -22,18 +24,19 @@ typedef struct Buf {
     _Atomic uint32_t play; double frac; _Atomic int playing, looping;
     int is3d, mode; float pos[3], vel[3], mind, maxd; uint32_t cone[2]; float coneor[3]; int32_t conevol;
     FILE *dump; uint32_t dump_frames, serial;           /* W32_DSDUMP: the stream as played, before gain */
+    int nnot; uint32_t not_off[64], not_ev[64];         /* IDirectSoundNotify positions (offset, event handle) */
 } Buf;
 #define NBUF 512
 static Buf bufs[NBUF];
 static struct { float pos[3], vel[3], front[3], top[3], dist, rolloff, doppler; } lis = {{0}, {0}, {0, 0, 1}, {0, 1, 0}, 1, 1, 1}; static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-static uint32_t vt_ds, vt_buf, vt_3d, vt_lis, vt_fx, ds_obj; static int ds_refs;
+static uint32_t vt_ds, vt_buf, vt_3d, vt_lis, vt_fx, vt_not, ds_obj; static int ds_refs;
 static DsAudio * au; static _Atomic int primary_playing;
 static _Atomic uint32_t slice_max = 512;                  /* largest render the device asked for: the write cursor's lead */
 
 static Buf *B(uint32_t obj)                            /* any of a buffer's interface pointers -> the buffer */
 {
     uint32_t k = rt_r32(G_MEM, obj + 4);
-    return k < NBUF && bufs[k].used && (bufs[k].obj == obj || bufs[k].obj + 8 == obj || bufs[k].obj + 16 == obj) ? &bufs[k] : 0;
+    return k < NBUF && bufs[k].used && (bufs[k].obj == obj || bufs[k].obj + 8 == obj || bufs[k].obj + 16 == obj || bufs[k].obj + 24 == obj) ? &bufs[k] : 0;
 }
 static float F(uint32_t v) { float f; memcpy(&f, &v, 4); return f; }
 /* the 3D gains of a buffer: distance attenuation and pan relative to the listener */
@@ -64,6 +67,14 @@ static inline float sample(Buf *b, uint32_t frame, int chn)
     uint32_t at = frame * b->align + (b->ch == 2 ? chn : 0) * (b->bits / 8);
     return b->bits == 16 ? (int16_t)rt_r16(G_MEM, b->mem + at) / 32768.0f : ((int)G_MEM[b->mem + at] - 128) / 128.0f;
 }
+static void notify_span(Buf *b, uint32_t from, uint32_t to)   /* the play cursor went from..to (bytes; to < from: it wrapped) */
+{
+    for (int k = 0; k < b->nnot; k++) {
+        uint32_t o = b->not_off[k]; if (o == 0xffffffffu) continue;
+        if (from <= to ? (o >= from && o < to) : (o >= from || o < to)) w32_event_signal(b->not_ev[k], 1);
+    }
+}
+static void notify_stop(Buf *b) { for (int k = 0; k < b->nnot; k++) if (b->not_off[k] == 0xffffffffu) w32_event_signal(b->not_ev[k], 1); }
 void w32_audio_out(const float *lr, uint32_t frames, int rate, int source);         /* winmm.c: mute, level log, dump */
 static void render(void *u, void *buffer, uint32_t frames)
 {
@@ -73,7 +84,7 @@ static void render(void *u, void *buffer, uint32_t frames)
     for (int k = 0; k < NBUF; k++) {          /* secondaries play whether or not the primary was Play()ed: DirectSound runs it implicitly */
         Buf *b = &bufs[k]; if (!b->used || b->primary || !b->playing) continue;
         double gl, gr; gains3d(b, &gl, &gr);
-        uint32_t nframes = b->size / b->align, pos = b->play / b->align; double step = (double)(b->freq ? b->freq : (uint32_t)b->rate) / OUT_RATE, fr = b->frac;
+        uint32_t nframes = b->size / b->align, pos = b->play / b->align, start = b->play; double step = (double)(b->freq ? b->freq : (uint32_t)b->rate) / OUT_RATE, fr = b->frac;
         static const char *dumpdir; static int dd_init; if (!dd_init) { dd_init = 1; dumpdir = getenv("W32_DSDUMP"); }
         if (dumpdir && !b->dump) {
             static uint32_t serial; char path[1024]; b->serial = ++serial;
@@ -93,6 +104,7 @@ static void render(void *u, void *buffer, uint32_t frames)
             if (pos >= nframes) { if (b->looping) pos -= nframes; else { b->playing = 0; pos = 0; break; } }
         }
         b->frac = fr; b->play = pos * b->align;
+        if (b->nnot) { if (b->playing) notify_span(b, start, b->play); else { notify_span(b, start, b->size); notify_stop(b); } }
     }
     w32_audio_out(out, frames, OUT_RATE, 1);
     if (getenv("W32_AUDIO_MUTE")) memset(out, 0, frames * 8);
@@ -120,6 +132,7 @@ static void b_QueryInterface(Ctx *c)                   /* the buffer (8), its 3D
     if (iid == 0 || iid == 0x279afa85u || iid == 0x6825a449u) r = b->obj;                       /* IUnknown, IDirectSoundBuffer(8) */
     else if (iid == 0x279afa86u && !b->primary) r = b->obj + 8;                                   /* IDirectSound3DBuffer */
     else if (iid == 0x279afa84u && b->primary) r = b->obj + 8;                                    /* IDirectSound3DListener */
+    else if (iid == 0xb0210783u && !b->primary) r = b->obj + 24;                                  /* IDirectSoundNotify */
     LOG("buffer QueryInterface %08x -> %s\n", iid, r ? "ok" : "no interface");
     rt_w32(G_MEM, out, r); if (r) b->refs++;
     RET(r ? DS_OK : DSERR_NOINTERFACE, 3);
@@ -199,7 +212,7 @@ static void b_SetFrequency(Ctx *c) { Buf *b = B(ARG(0)); if (!b) RET(DSERR_INVAL
 static void b_Stop(Ctx *c)
 {
     Buf *b = B(ARG(0)); if (!b) RET(DSERR_INVALIDPARAM, 1);
-    if (b->primary) primary_playing = 0; else b->playing = 0;
+    if (b->primary) primary_playing = 0; else { int was = b->playing; b->playing = 0; if (was) notify_stop(b); }
     RET(DS_OK, 1);
 }
 static void b_Unlock(Ctx *c) { RET(DS_OK, 5); }
@@ -221,9 +234,9 @@ static uint32_t new_buf(Buf **out)
     int k = 0; while (k < NBUF && bufs[k].used) k++;
     if (k == NBUF) { pthread_mutex_unlock(&lock); static int w; if (!w++) fprintf(stderr, "dsound: more than %d sound buffers\n", NBUF); return 0; }
     Buf *b = &bufs[k]; uint32_t keep = b->obj; memset(b, 0, sizeof *b); b->used = 1; b->refs = 1; b->mind = 1; b->maxd = 1e9f; set_gain(b);
-    b->obj = keep ? keep : heap_alloc(w32_process_heap, 8, 24);           /* a slot's object is reused with it */
-    for (uint32_t i = 0; i < 3; i++) rt_w32(G_MEM, b->obj + 8 * i + 4, (uint32_t)k);
-    rt_w32(G_MEM, b->obj, vt_buf); rt_w32(G_MEM, b->obj + 8, vt_3d); rt_w32(G_MEM, b->obj + 16, vt_fx);
+    b->obj = keep ? keep : heap_alloc(w32_process_heap, 8, 32);           /* a slot's object is reused with it */
+    for (uint32_t i = 0; i < 4; i++) rt_w32(G_MEM, b->obj + 8 * i + 4, (uint32_t)k);
+    rt_w32(G_MEM, b->obj, vt_buf); rt_w32(G_MEM, b->obj + 8, vt_3d); rt_w32(G_MEM, b->obj + 16, vt_fx); rt_w32(G_MEM, b->obj + 24, vt_not);
     pthread_mutex_unlock(&lock);
     *out = b; return b->obj;
 }
@@ -343,6 +356,16 @@ static void x_GetPreset(Ctx *c) { rt_w32(G_MEM, ARG(1), 0); RET(DS_OK, 2); }
 static void x_SetQuality(Ctx *c) { RET(DS_OK, 2); }
 static void x_GetQuality(Ctx *c) { rt_w32(G_MEM, ARG(1), 0); RET(DS_OK, 2); }
 
+/* ---- IDirectSoundNotify ---- */
+static void n_SetNotificationPositions(Ctx *c)         /* (count, DSBPOSITIONNOTIFY[]: offset, event) */
+{
+    Buf *b = B(ARG(0)); uint32_t n = ARG(1), p = ARG(2); if (!b || n > 64 || (n && !p)) RET(DSERR_INVALIDPARAM, 3);
+    if (b->playing) RET(0x8878001eu /* DSERR_INVALIDCALL */, 3);
+    pthread_mutex_lock(&lock);
+    for (uint32_t k = 0; k < n; k++) { b->not_off[k] = rt_r32(G_MEM, p + 8 * k); b->not_ev[k] = rt_r32(G_MEM, p + 8 * k + 4); }
+    b->nnot = (int)n; pthread_mutex_unlock(&lock);
+    LOG("%u notification positions\n", n); RET(DS_OK, 3);
+}
 static uint32_t vtable(const char *iface, void (*const *fns)(Ctx *), int n)
 {
     uint32_t t = heap_alloc(w32_process_heap, 8, 4u * (uint32_t)n);
@@ -369,6 +392,8 @@ IMPL(dsound, DirectSoundCreate)
                        sizeof fx / sizeof *fx == 9, "vtable sizes");
         vt_ds = vtable("IDirectSound8", ds, 12); vt_buf = vtable("IDirectSoundBuffer8", bf, 24); vt_3d = vtable("IDirectSound3DBuffer", td, 21);
         vt_lis = vtable("IDirectSound3DListener", ls, 18); vt_fx = vtable("IDirectSoundFXI3DL2Reverb", fx, 9);
+        static void (*const nt[])(Ctx *) = { b_QueryInterface, b_AddRef, b_Release, n_SetNotificationPositions };
+        vt_not = vtable("IDirectSoundNotify", nt, 4);
         ds_obj = heap_alloc(w32_process_heap, 8, 8); rt_w32(G_MEM, ds_obj, vt_ds);
     }
     { const char *m = getenv("W32_DSOUND"); if (m && !strcmp(m, "0")) RET(DSERR_GENERIC, 3); }   /* W32_DSOUND=0: Miles uses waveOut */
