@@ -52,5 +52,7 @@ int gta3_hook(Ctx *c, uint32_t addr)
     if (addr == PICK_MODE) { pick_mode(c); return 1; }
     return 0;
 }
+#else
+int gta3_hook(Ctx *c, uint32_t addr) { (void)c; (void)addr; return 0; }   /* Ghost Recon: no video-mode hook (yet) */
 #endif
 #endif

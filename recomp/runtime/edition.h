@@ -1,11 +1,21 @@
 /* Address-specific hooks and user-data names must follow the compiled executable. */
 #ifndef DS2_EDITION_H
 #define DS2_EDITION_H
-#if defined(GTA3_EDITION) || defined(GTAVC_EDITION) || defined(GTASA_EDITION)
-#define GTA_EDITION 1   /* what the three Grand Theft Auto games share (launcher, window, video mode) */
+#if defined(GTA3_EDITION) || defined(GTAVC_EDITION) || defined(GTASA_EDITION) || defined(GR_EDITION)
+#define GTA_EDITION 1   /* what the Direct3D 8/9 games of this repo share (launcher, window, video mode): the GTA
+                           * games it was forked from and Ghost Recon (GR_EDITION) */
 #endif
 #ifdef GTA_EDITION
-#if defined(GTA3_EDITION)
+#if defined(GR_EDITION)
+/* Tom Clancy's Ghost Recon (Steam app 15300, depot 15301: GhostRecon.exe 1.4, unwrapped by tools/steamstub20.py; the
+ * expansions Desert Siege and Island Thunder are its Mods/Mp1 and Mods/Mp2): Red Storm's engine on Direct3D 8,
+ * DirectSound, DirectInput 8 */
+#define DS2_IMAGE_END 0x0094d000u
+#define DS2_TITLE "Ghost Recon"
+#define DS2_DOCUMENTS "Ghost Recon"
+#define DS2_INI "GhostRecon.ini"
+#define GAME_EXE "GhostRecon.exe"
+#elif defined(GTA3_EDITION)
 /* Grand Theft Auto III (the Mac Steam release, app 12230: gta3.exe 1.1 from TransGaming's Cider wrapper, unwrapped by
  * tools/steamstub21.py): RenderWare on Direct3D 8; no Dungeon Siege hooks */
 #define DS2_IMAGE_END 0x009ea000u
