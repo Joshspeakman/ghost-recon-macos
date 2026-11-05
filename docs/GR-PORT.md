@@ -46,6 +46,11 @@ chosen mode.
   `trunc(ln(n) * 1/ln2) == log2(n)`: in double precision 8, 64 and 128 come out a hair under (6.999…), so with
   mipmapping on a 256x128 image (character/allied/head.rsb) was taken for a non-power of two, got no mip images and
   the copy read from address 0. `W32_NO_FPUSETUP=1` skips it (test switch, as for DirectDraw).
+- Winsock: Ghost Recon binds its game sockets to the first address `gethostbyname` gives for its own name, which is
+  the router's public address (listed first for internet players); a bind to an address that isn't this Mac's now
+  falls back to every local address. A socket from `accept` keeps the listening socket's non-blocking mode, as on
+  Windows (made blocking, the host stopped in its first `recv` once a player joined). Under `W32_NETVIRT` a TCP
+  connect to 127.0.0.k goes to copy k's port range. `W32_NETLOG=1` also shows socket, bind and accept.
 - DirectInput 8 is fed by the Mac host (mouse motion, buttons, wheel, keys); it was only fed on Linux before.
 - Renderer (from gta-classics f270d68): Direct3D vertex lighting (characters, props: FVF with normals, lighting on)
   and per-stage texture-coordinate sets. Terrain is FVF `0x242` (two sets): stage 0 the map's colour layer on set 0,
@@ -71,7 +76,7 @@ Auto Assign 122,89. Escape in Training ends it.
 | Island Thunder | new campaign → C01 intro flyover in game |
 | Sound | music, effects and briefing voice play (DirectSound, EAX not offered) |
 | Movies | **skipped**: MS-MPEG-4 v2 (MP42) and Indeo 3.2 (IV32) AVIs, no decoder in the runtime yet |
-| Multiplayer | not tested |
+| Multiplayer | LAN: host, join, lobby, a round on opposite teams (two copies on one Mac, `W32_NETVIRT=1`/`2`) |
 | Mipmapping option | works (on for new installs); the game's mip LOD bias is applied, plus 16x anisotropic filtering (`DSR_ANISO=1` off) |
 
 Known cosmetic leftovers: the guest install path is `C:\GOG Games\Dungeon Siege` (shows in `IkeCrash.log`), log
