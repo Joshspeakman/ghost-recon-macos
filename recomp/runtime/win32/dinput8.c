@@ -23,6 +23,7 @@ static uint8_t keys[256], mbuttons[8];
 static Dev *kbd, *mouse; static uint32_t seq;
 static uint32_t vt_di, vt_dev, di_obj;
 
+#define DILOG(...) do { static int on = -1; if (on < 0) on = getenv("W32_DILOG") != 0; if (on) fprintf(stderr, "dinput: " __VA_ARGS__); } while (0)
 static uint32_t now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint32_t)(t.tv_sec * 1000 + t.tv_nsec / 1000000); }
 static void enqueue(Dev *d, uint32_t ofs, uint32_t data)          /* di_lock held */
 {
@@ -57,7 +58,7 @@ void w32_di_mouse_button(int b, int down)
     if (b < 0 || b > 7) return;
     pthread_mutex_lock(&di_lock);
     uint8_t v = down ? 0x80 : 0;
-    if (mbuttons[b] != v) { mbuttons[b] = v; enqueue(mouse, 12u + (uint32_t)b, v); }
+    if (mbuttons[b] != v) { mbuttons[b] = v; enqueue(mouse, 12u + (uint32_t)b, v); DILOG("host button %d %d (mouse %s, buffer %d)\n", b, down, mouse && mouse->acquired ? "acquired" : "not acquired", mouse ? mouse->buffer_size : -1); }
     pthread_mutex_unlock(&di_lock);
 }
 void w32_di_release_all(void)                                       /* focus lost: every key and button up */
@@ -97,10 +98,10 @@ static void d_SetProperty(Ctx *c)                     /* DIPROPDWORD: header (16
 static void d_Acquire(Ctx *c)
 {
     Dev *d = dev_of(c); pthread_mutex_lock(&di_lock);
-    int was = d->acquired; d->acquired = 1; if (!was) { d->qh = d->qt = 0; d->dx = d->dy = d->dz = 0; }
+    int was = d->acquired; d->acquired = 1; DILOG("acquire %s (was %d)\n", d->mouse ? "mouse" : "keyboard", was); if (!was) { d->qh = d->qt = 0; d->dx = d->dy = d->dz = 0; }
     pthread_mutex_unlock(&di_lock); RET(was ? 1u /* S_FALSE */ : DI_OK, 1);
 }
-static void d_Unacquire(Ctx *c) { Dev *d = dev_of(c); pthread_mutex_lock(&di_lock); d->acquired = 0; pthread_mutex_unlock(&di_lock); RET(DI_OK, 1); }
+static void d_Unacquire(Ctx *c) { Dev *d = dev_of(c); DILOG("unacquire %s\n", d->mouse ? "mouse" : "keyboard"); pthread_mutex_lock(&di_lock); d->acquired = 0; pthread_mutex_unlock(&di_lock); RET(DI_OK, 1); }
 static void d_GetDeviceState(Ctx *c)                  /* keyboard: 256 bytes; mouse: DIMOUSESTATE (16) or DIMOUSESTATE2 (20) */
 {
     Dev *d = dev_of(c); uint32_t n = ARG(1), p = ARG(2);
@@ -111,6 +112,7 @@ static void d_GetDeviceState(Ctx *c)                  /* keyboard: 256 bytes; mo
         int32_t v[3] = {d->dx, d->dy, d->dz}; d->dx = d->dy = d->dz = 0;
         memset(GP(p), 0, n); memcpy(GP(p), v, n < 12 ? n : 12);
         if (n > 12) memcpy(GP(p + 12), mbuttons, n - 12 < 8 ? n - 12 : 8);
+        if (mbuttons[0] | mbuttons[1]) DILOG("state: buttons %02x %02x\n", mbuttons[0], mbuttons[1]);
     }
     pthread_mutex_unlock(&di_lock); RET(DI_OK, 3);
 }
@@ -127,6 +129,7 @@ static void d_GetDeviceData(Ctx *c)                   /* (object data size, DIDE
         h = (h + 1) % QN; got++;
     }
     if (!out && want == 0xffffffffu) { got = 0; for (h = d->qh; h != d->qt; h = (h + 1) % QN) got++; if (!peek) h = d->qt; }   /* flush */
+    if (d->mouse && got) for (int i = d->qh, k = 0; k < (int)got; i = (i + 1) % QN, k++) if (d->q[i].ofs >= 12) DILOG("data: button %u %02x%s\n", d->q[i].ofs - 12, d->q[i].data, peek ? " (peek)" : "");
     if (!peek) d->qh = h;
     uint32_t r = d->overflow ? DI_BUFFEROVERFLOW : DI_OK; if (!peek) d->overflow = 0;
     pthread_mutex_unlock(&di_lock);

@@ -154,12 +154,14 @@ static void *render_thread(void *arg)
 // DS_SCRIPT="1900:click:400,150;2100:shot:/tmp/a.png;2200:key:13" : at a presented frame, act through the same message
 // path as real input. Coordinates are in the game's current display mode.
 typedef struct { uint32_t frame; double at; char kind[8]; int x, y; char path[512]; } Act;   // at > 0: seconds from start
-static Act acts[256]; static int nacts;
+static Act acts[4096]; static int nacts;
 static double vcur_x, vcur_y;          // virtual cursor in game (display mode) pixels
 static void post(uint32_t msg, uint32_t wp, uint32_t lp);
 static int captured;
 static double raw_fx, raw_fy, cursor_fx, cursor_fy;
 extern void w32_raw_mouse_move(int dx, int dy);
+/* DirectInput 8 (dinput8.c): Ghost Recon reads its mouse and keyboard there; nothing happens until a game acquires a device */
+extern void w32_di_key(int dik, int down), w32_di_mouse_move(int dx, int dy), w32_di_mouse_wheel(int dz), w32_di_mouse_button(int b, int down);
 extern void w32_raw_mouse_sample(int32_t *dx, int32_t *dy, int consume);
 static void capture(int on);
 static void rel_motion(double gx, double gy);   /* relative motion in game pixels, the real-input path */
@@ -168,7 +170,7 @@ static void parse_script(void)
 {
     const char *e = getenv("DS_SCRIPT"); if (!e) return;
     char *s = strdup(e), *save, *tok = strtok_r(s, ";", &save);
-    while (tok && nacts < 256) {
+    while (tok && nacts < 4096) {
         Act *a = &acts[nacts]; char kind[8] = "", rest[600] = "";
         int ok = tok[0] == '@' ? sscanf(tok + 1, "%lf:%7[a-z]:%599[^\n]", &a->at, kind, rest) : sscanf(tok, "%u:%7[a-z]:%599[^\n]", &a->frame, kind, rest);
         if (tok[0] == '@') a->frame = 0xffffffffu;
@@ -210,7 +212,7 @@ static void cmdfile_poll(uint32_t fno)
     if (!path || fno % 15) return;
     FILE *f = fopen(path, "r"); if (!f) return;
     fseeko(f, pos, SEEK_SET); char line[700];
-    while (nacts < 256 && fgets(line, sizeof line, f)) {
+    while (nacts < 4096 && fgets(line, sizeof line, f)) {
         size_t l = strlen(line); if (!l || line[l - 1] != '\n') break;       /* a line still being written */
         pos += (off_t)l; line[l - 1] = 0;
         Act *a = &acts[nacts]; char kind[8] = "", rest[600] = "";
@@ -233,13 +235,20 @@ static const char *script_tick(uint32_t fno)       /* returns a screenshot path 
         if (!strcmp(a->kind, "click") || !strcmp(a->kind, "rclick")) {
             int r = a->kind[0] == 'r';
             if (fno == a->frame) { mot_home = 8; mot_dx = a->x; mot_dy = a->y; }
-            if (fno == a->frame + 20) post(r ? 0x204 : 0x201, r ? 2 : 1, pos_lp());
-            if (fno == a->frame + 24) post(r ? 0x205 : 0x202, 0, pos_lp());
+            if (fno == a->frame + 20) { w32_di_mouse_button(r, 1); post(r ? 0x204 : 0x201, r ? 2 : 1, pos_lp()); }
+            if (fno == a->frame + 32) { w32_di_mouse_button(r, 0); post(r ? 0x205 : 0x202, 0, pos_lp()); }   /* held ~100 ms, as a real click: a game polling its buttons at its own pace sees it */
+        } else if (!strcmp(a->kind, "dclick")) {          /* dclick:x,y: a double click (two clicks 60 ms apart) */
+            if (fno == a->frame) { mot_home = 8; mot_dx = a->x; mot_dy = a->y; }
+            for (int n = 0; n < 2; n++) {
+                if (fno == a->frame + 20 + 8 * (uint32_t)n) { w32_di_mouse_button(0, 1); post(n ? 0x203 : 0x201, 1, pos_lp()); }
+                if (fno == a->frame + 23 + 8 * (uint32_t)n) { w32_di_mouse_button(0, 0); post(0x202, 0, pos_lp()); }
+            }
         } else if (!strcmp(a->kind, "press")) {           /* press:x,y: the left button pressed and held (until a later click) */
             if (fno == a->frame) { mot_home = 8; mot_dx = a->x; mot_dy = a->y; }
             if (fno == a->frame + 20) post(0x201, 1, pos_lp());
         } else if (!strcmp(a->kind, "move") && fno == a->frame) { mot_home = 8; mot_dx = a->x; mot_dy = a->y; }
         else if (!strcmp(a->kind, "rel") && fno >= a->frame && fno < a->frame + 60) rel_motion(a->x / 60.0, a->y / 60.0);   /* x,y over 60 frames, like a trackpad swipe */
+        else if (!strcmp(a->kind, "dimove") && fno >= a->frame && fno < a->frame + 10) { int i = (int)(fno - a->frame); w32_di_mouse_move(a->x * (i + 1) / 10 - a->x * i / 10, a->y * (i + 1) / 10 - a->y * i / 10); }   /* DirectInput mickeys over 10 frames, all of them */
         else if (!strcmp(a->kind, "glide") && fno == a->frame) {   /* glide:x,y: the same motion over half a second, 1000 times a second
                                                                        like a real mouse, whatever the frame rate */
             int gx = a->x, gy = a->y;
@@ -247,11 +256,13 @@ static const char *script_tick(uint32_t fno)       /* returns a screenshot path 
                 for (int k = 0; k < 500; k++) { dispatch_async(dispatch_get_main_queue(), ^{ rel_motion(gx / 500.0, gy / 500.0); }); usleep(1000); } });
         }
         else if (!strcmp(a->kind, "key")) {
-            if (fno == a->frame) { w32_keys[a->x & 0xff] = 0x80; post(0x100, (uint32_t)a->x, 1 | key_scan(a->x)); }
-            if (fno == a->frame + 3) { w32_keys[a->x & 0xff] = 0; post(0x101, (uint32_t)a->x, 0xc0000001u | key_scan(a->x)); }
+            uint32_t sc = key_scan(a->x); int dik = (int)((sc >> 16) & 0x7f) | (sc >> 24 ? 0x80 : 0);
+            if (fno == a->frame) { w32_keys[a->x & 0xff] = 0x80; w32_di_key(dik, 1); post(0x100, (uint32_t)a->x, 1 | sc); }
+            if (fno == a->frame + 3) { w32_keys[a->x & 0xff] = 0; w32_di_key(dik, 0); post(0x101, (uint32_t)a->x, 0xc0000001u | sc); }
         } else if (!strcmp(a->kind, "hold")) {            /* hold:vk,frames: a key held down (the modifier of a chord) */
-            if (fno == a->frame) { w32_keys[a->x & 0xff] = 0x80; post(0x100, (uint32_t)a->x, 1 | key_scan(a->x)); }
-            if (fno == a->frame + (uint32_t)a->y) { w32_keys[a->x & 0xff] = 0; post(0x101, (uint32_t)a->x, 0xc0000001u | key_scan(a->x)); }
+            uint32_t sc = key_scan(a->x); int dik = (int)((sc >> 16) & 0x7f) | (sc >> 24 ? 0x80 : 0);
+            if (fno == a->frame) { w32_keys[a->x & 0xff] = 0x80; w32_di_key(dik, 1); post(0x100, (uint32_t)a->x, 1 | sc); }
+            if (fno == a->frame + (uint32_t)a->y) { w32_keys[a->x & 0xff] = 0; w32_di_key(dik, 0); post(0x101, (uint32_t)a->x, 0xc0000001u | sc); }
         } else if (!strcmp(a->kind, "shot") && fno == a->frame) shot = a->path;
         else if (!strcmp(a->kind, "peek") && fno == a->frame) {
             extern uint8_t *G_MEM; char *e = a->path; uint32_t at = (uint32_t)strtoul(e, &e, 16), v = 0;
@@ -313,6 +324,7 @@ static void key_event(uint16_t code, int down, int repeat)
     if (k.vk == 0x11) w32_keys[k.ext ? 0xa3 : 0xa2] = w32_keys[0x11];
     if (k.vk == 0x12) w32_keys[k.ext ? 0xa5 : 0xa4] = w32_keys[0x12];
     uint32_t lp = 1u | ((uint32_t)k.scan << 16) | ((uint32_t)k.ext << 24) | (prev << 30) | (down ? 0 : 0x80000000u);
+    if (!repeat) w32_di_key(k.scan | (k.ext ? 0x80 : 0), down);   /* DIK codes: set-1 scan codes, extended keys +0x80 */
     int sys = alt || k.vk == 0x12;
     post(down ? (sys ? 0x104u : 0x100u) : (sys ? 0x105u : 0x101u), k.vk, lp);
 }
@@ -361,7 +373,7 @@ static void rel_motion(double gx, double gy)
     int rx = (int)fmax(-2147483647.0, fmin(2147483647.0, raw_fx));
     int ry = (int)fmax(-2147483647.0, fmin(2147483647.0, raw_fy));
     raw_fx -= rx; raw_fy -= ry;
-    w32_raw_mouse_move(rx, ry);
+    w32_raw_mouse_move(rx, ry); w32_di_mouse_move(rx, ry);
     uint32_t mw, mh; dsr_mode_size(&mw, &mh);
     NSSize size = (game_view ?: win.contentView).bounds.size;
     double scale = fmax(mw / fmax(size.width, 1), mh / fmax(size.height, 1));
@@ -377,12 +389,12 @@ static void rel_motion(double gx, double gy)
 - (void)mouseDragged:(NSEvent *)e { [self moved:e]; }
 - (void)rightMouseDragged:(NSEvent *)e { [self moved:e]; }
 - (void)otherMouseDragged:(NSEvent *)e { [self moved:e]; }
-- (void)mouseDown:(NSEvent *)e { buttons |= 1; w32_keys[1] = 0x80; post(e.clickCount == 2 ? 0x203 : 0x201, mk(), pos_lp()); }
-- (void)mouseUp:(NSEvent *)e { buttons &= ~1u; w32_keys[1] = 0; post(0x202, mk(), pos_lp()); }
-- (void)rightMouseDown:(NSEvent *)e { buttons |= 2; w32_keys[2] = 0x80; post(e.clickCount == 2 ? 0x206 : 0x204, mk(), pos_lp()); }
-- (void)rightMouseUp:(NSEvent *)e { buttons &= ~2u; w32_keys[2] = 0; post(0x205, mk(), pos_lp()); }
-- (void)otherMouseDown:(NSEvent *)e { buttons |= 0x10; w32_keys[4] = 0x80; post(0x207, mk(), pos_lp()); }
-- (void)otherMouseUp:(NSEvent *)e { buttons &= ~0x10u; w32_keys[4] = 0; post(0x208, mk(), pos_lp()); }
+- (void)mouseDown:(NSEvent *)e { w32_di_mouse_button(0, 1); buttons |= 1; w32_keys[1] = 0x80; post(e.clickCount == 2 ? 0x203 : 0x201, mk(), pos_lp()); }
+- (void)mouseUp:(NSEvent *)e { w32_di_mouse_button(0, 0); buttons &= ~1u; w32_keys[1] = 0; post(0x202, mk(), pos_lp()); }
+- (void)rightMouseDown:(NSEvent *)e { w32_di_mouse_button(1, 1); buttons |= 2; w32_keys[2] = 0x80; post(e.clickCount == 2 ? 0x206 : 0x204, mk(), pos_lp()); }
+- (void)rightMouseUp:(NSEvent *)e { w32_di_mouse_button(1, 0); buttons &= ~2u; w32_keys[2] = 0; post(0x205, mk(), pos_lp()); }
+- (void)otherMouseDown:(NSEvent *)e { w32_di_mouse_button(2, 1); buttons |= 0x10; w32_keys[4] = 0x80; post(0x207, mk(), pos_lp()); }
+- (void)otherMouseUp:(NSEvent *)e { w32_di_mouse_button(2, 0); buttons &= ~0x10u; w32_keys[4] = 0; post(0x208, mk(), pos_lp()); }
 - (void)scrollWheel:(NSEvent *)e
 {
     static double acc; acc += e.hasPreciseScrollingDeltas ? e.scrollingDeltaY / 10.0 : e.scrollingDeltaY;
@@ -399,7 +411,7 @@ static void rel_motion(double gx, double gy)
         return;
     }
 #endif
-    while (acc >= 1 || acc <= -1) { int d = acc > 0 ? 1 : -1; acc -= d; post(0x20a, ((uint32_t)(int16_t)(120 * d) << 16) | mk(), pos_lp()); }
+    while (acc >= 1 || acc <= -1) { int d = acc > 0 ? 1 : -1; acc -= d; w32_di_mouse_wheel(120 * d); post(0x20a, ((uint32_t)(int16_t)(120 * d) << 16) | mk(), pos_lp()); }
 }
 - (void)keyDown:(NSEvent *)e
 {
