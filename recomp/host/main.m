@@ -580,10 +580,10 @@ static void gr_prepare(const char *overlay)
             NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"<VideoResolution[^>]*/>" options:0 error:nil];
             if (x && [re firstMatchInString:x options:0 range:NSMakeRange(0, x.length)])
                 x = [re stringByReplacingMatchesInString:x options:0 range:NSMakeRange(0, x.length) withTemplate:[NSRegularExpression escapedTemplateForString:res]];
-            else if (!x)   /* first run: the game fills in every other setting with its defaults (mipmapping stays off: with
-                                                    * it on, the game's own mip path crashes on character/allied/head.rsb) */
+            else if (!x)   /* first run: the game fills in every other setting with its defaults (mipmaps on: distant
+                            * ground and trees don't shimmer; d3d8.inc's single-precision FPU lets the game mip every image) */
                 x = [NSString stringWithFormat:@"<OptionsFile>\r\n\t<Graphics>\r\n\t\t<FullScreen>TRUE</FullScreen>\r\n\t\t%@\r\n"
-                     "\t\t<ZBufferBits>24</ZBufferBits>\r\n\t</Graphics>\r\n</OptionsFile>\r\n", res];
+                     "\t\t<DefaultMipMapping>TRUE</DefaultMipMapping>\r\n\t\t<ZBufferBits>24</ZBufferBits>\r\n\t</Graphics>\r\n</OptionsFile>\r\n", res];
             if (x) [x writeToFile:path atomically:YES encoding:NSWindowsCP1252StringEncoding error:nil];
             fprintf(stderr, "GhostRecon: video mode %ux%u\n", w, h);
         }
