@@ -597,17 +597,26 @@ static NSAlert *alert(NSString *msg, NSString *info) { NSAlert *a = [NSAlert new
         return [a componentsJoinedByString:@"  ·  "];
     };
     __weak GRLaunchView *wv = v; gfx.activate = ^{ [wv openPanel]; };
-    NSString *game = self.game, *saveDir = [game stringByAppendingPathComponent:@"Mods/Origmiss/Save"];   /* the game's own save folder */
+    /* the game's writes go to the data folder's copy of the game folder (<data>/game, main.m): each campaign's saves
+     * in its mod's folder there (Mods/Origmiss, Mp1, Mp2: save/game campaigns and checkpoints, save/replay) */
+    NSString *game = self.game, *dataDir = self.data;
+    __weak GRLaunchView *wsv = v;
+    NSString *(^saveDir)(void) = ^NSString * {
+        static NSString *const mods[NCAMP] = {@"mods/origmiss/save", @"mods/mp1/save", @"mods/mp2/save"};
+        NSInteger k = wsv ? MAX(0, MIN(NCAMP - 1, wsv.campaign)) : 0;
+        return [[dataDir stringByAppendingPathComponent:@"game"] stringByAppendingPathComponent:mods[k]];
+    };
     BOOL haveGame = [fm fileExistsAtPath:[game stringByAppendingPathComponent:@"GhostRecon.exe"]];
     GRTile *saves = [GRTile new]; saves.title = @"Saves";
     saves.current = ^NSDictionary * {
         if (!haveGame) return @{@"label": @"—", @"off": @YES, @"note": @"Ghost Recon's files are missing: run ./install.sh again"};
-        return @{@"label": @"Open", @"note": [@"Saved games: " stringByAppendingString:saveDir.stringByAbbreviatingWithTildeInPath]};
+        return @{@"label": @"Open", @"note": [@"Saved games: " stringByAppendingString:saveDir().stringByAbbreviatingWithTildeInPath]};
     };
     saves.activate = ^{
         if (!haveGame) { NSBeep(); return; }
-        [[NSFileManager defaultManager] createDirectoryAtPath:saveDir withIntermediateDirectories:YES attributes:nil error:nil];
-        [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:saveDir isDirectory:YES]];
+        NSString *d = saveDir();
+        [[NSFileManager defaultManager] createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil];
+        [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:d isDirectory:YES]];
     };
     GRTile *files = [GRTile new]; files.title = @"Game Files";
     files.current = ^NSDictionary * {

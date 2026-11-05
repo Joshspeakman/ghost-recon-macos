@@ -28,16 +28,27 @@ They land in Steam's `steamapps/content/app_<id>/depot_<id>` folders, where `./i
 
 ## State
 
-**In development.** See [docs/GR-PORT.md](docs/GR-PORT.md) for what works.
+**Playable, in development.** All three campaigns reach their missions on Metal (menus, Training, Desert Siege
+D01, Island Thunder C01); movies are skipped for now. See [docs/GR-PORT.md](docs/GR-PORT.md).
 
 | Part | State |
 |---|---|
 | Steam wrapper | SteamStub 2.0 (`recomp/tools/steamstub20.py`), undone on a local copy at build time |
 | Recompilation | `GhostRecon.exe` 1.4 (Steam) |
 | Graphics | Direct3D 8 on the Direct3D 9 → Metal layer (fixed function) |
-| Sound | DirectSound |
-| Input | DirectInput 8 |
+| Sound | DirectSound (music, effects, voice); IDirectSoundNotify streams |
+| Input | DirectInput 8 (mouse and keyboard from the Mac host) |
 | Movies | MS-MPEG-4 v2 / Indeo 3.2 AVIs: not decoded yet (skipped) |
+
+## Installing
+
+```sh
+./install.sh --branch nightly          # "Ghost Recon Nightly.app" in ~/Applications
+```
+
+`./install.sh --help` lists the options. The launch window has a card per campaign (Ghost Recon, Desert Siege, Island
+Thunder: each runs the same program with that campaign's mods), Graphics Options (Display, Notch, Resolution, VSync),
+Saves, Game Files and Updates.
 
 ## Building by hand
 
