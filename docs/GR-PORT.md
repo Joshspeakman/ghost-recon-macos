@@ -72,7 +72,7 @@ Auto Assign 122,89. Escape in Training ends it.
 | Sound | music, effects and briefing voice play (DirectSound, EAX not offered) |
 | Movies | **skipped**: MS-MPEG-4 v2 (MP42) and Indeo 3.2 (IV32) AVIs, no decoder in the runtime yet |
 | Multiplayer | not tested |
-| Mipmapping option | works (on for new installs); the game's MipMapLODBias is not applied by the renderer yet |
+| Mipmapping option | works (on for new installs); the game's mip LOD bias is applied, plus 16x anisotropic filtering (`DSR_ANISO=1` off) |
 
 Known cosmetic leftovers: the guest install path is `C:\GOG Games\Dungeon Siege` (shows in `IkeCrash.log`), log
 lines say `DungeonSiegeNative:`.
