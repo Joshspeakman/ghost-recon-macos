@@ -38,7 +38,7 @@ while [ $# -gt 0 ]; do
     --no-downloads) NODL=--no-downloads; shift;;
     --in-place) IN_PLACE=1; shift;;
     --skip-build) SKIP_BUILD=1; shift;;
-    -h|--help) sed -n '2,29p' "$0" | cut -c3-; exit 0;;
+    -h|--help) sed -n '2,26p' "$0" | cut -c3-; exit 0;;
     *) echo "unknown option $1 (see install.sh --help)"; exit 1;;
   esac
 done
