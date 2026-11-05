@@ -1,186 +1,137 @@
 #!/bin/bash
-# install.sh [--games gta3,vc,sa] [--steam-dir DIR] [--gta3-dir D] [--vc-dir D] [--sa-dir D] [--app-dir DIR]
-#            [--branch main|nightly] [--no-downloads] [--in-place]
+# install.sh [--game-dir DIR] [--data-dir DIR] [--app-dir DIR] [--branch main|nightly] [--no-downloads] [--in-place]
+#            [--depots DIR]
 #
-# Builds Grand Theft Auto III, Vice City and San Andreas natively for Apple Silicon from your own Steam copies and
-# installs them as one app, "GTA Classics.app" ("GTA Classics Nightly.app" with --branch nightly), in ~/Applications.
-# Its launch window has a card per game; Play starts the chosen one in the same process (Game Mode stays on).
+# Builds Tom Clancy's Ghost Recon natively for Apple Silicon from your own Steam copy and installs it as one app,
+# "Ghost Recon.app" ("Ghost Recon Nightly.app" with --branch nightly), in ~/Applications. Its launch window has a card
+# for the base campaign and each expansion (Desert Siege, Island Thunder): one recompiled GhostRecon.exe 1.4 plays all
+# three; Play starts the chosen one in the same process (Game Mode stays on).
 #
-# The games are the Mac Steam releases (TransGaming's wrapper around the Windows game: GTA III 12230, San Andreas
-# 12250), found under --steam-dir (default ~/Library/Application Support/Steam/steamapps/common), or already imported
-# by an earlier install, or given with --gta3-dir / --vc-dir / --sa-dir (the folder holding gta3.exe, gta-vc.exe or
-# gta_sa.exe). Vice City is the Windows release (app 12110): the Mac release's gta-vc.exe carries SecuROM with online
-# activation, which this project does not touch. Download it from Steam's console (steam://open/console):
-# "download_depot 12110 12111"; the depot folder Steam reports is found by default. --games picks which to build (default: every game found); a game already in
-# the app and not named this time is kept as it is. A game whose port isn't in this checkout yet is skipped.
-# Each game is copied into its data folder (~/Games/GTA3Native, GTAVCNative, GTASANative: game-files/<folder>, an
-# APFS clone, no extra space), so the Steam copy can go afterwards; --in-place reads the found folders instead.
-# Saves and settings go to the data folder (drive_c/Users/player/Documents/...). The launch window's art comes from
-# the games' Steam store pages (recomp/tools/gta_art.py, into ~/Games/GTAClassics/art; --no-downloads writes the
-# titles instead); the app's icon is GTA III's Mac release's own. The app's updater (Updates in the launch window)
-# rebuilds every installed game from the branch it follows. Needs clang and python3 (the Xcode command line tools);
-# the recompiler installs capstone with pip into recomp/.venv.
-#   development: --skip-build assembles the app from the last builds in recomp/work/<gta3|gtavc|gtasa> instead.
+# Ghost Recon is Windows-only on Steam. Download the depots in Steam's console (steam://open/console):
+#   download_depot 15300 15301     Ghost Recon
+#   download_depot 13620 13621     Desert Siege (its Mods/Mp1)
+#   download_depot 13630 13631     Island Thunder (its Mods/Mp2)
+# They land under Steam's steamapps/content/app_<id>/depot_<id> (--depots: that content folder), where they are found.
+# The game is copied into the data folder (--data-dir, default ~/Games/GhostReconNative: game-files/GhostRecon, an APFS
+# clone, no extra space) and each expansion found is merged into it (Mods/Mp1, Mods/Mp2; readmes and manuals in Docs),
+# also into an earlier import, so the depots can go afterwards. An import already there is used as it is.
+# --game-dir names the GhostRecon folder (the one holding GhostRecon.exe) to import from instead of the depot.
+# --in-place reads the game from where it is found and copies nothing: an expansion is then only played if its Mods
+# folder is already in that game folder.
+# Saves stay in the game's own Mods/Origmiss/Save; the launch window's choices in <data>/launcher.plist. The window's
+# art comes from the Steam store pages (recomp/tools/gr_art.py, into <data>/art; --no-downloads draws plain colours);
+# the app's icon is the game's own (Ghost.ico). The app's updater (Updates in the launch window) rebuilds it from the
+# branch it follows. Needs clang and python3 (the Xcode command line tools); the recompiler installs capstone with pip
+# into recomp/.venv.
+#   development: --skip-build assembles the app from the last build in recomp/work/gr instead.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-STEAM="$HOME/Library/Application Support/Steam/steamapps/common"
-WANT=""; DIR_gta3=""; DIR_vc=""; DIR_sa=""; APPS=""; NODL=""; U_BRANCH=main; IN_PLACE=""; SKIP_BUILD=""
+DEPOTS="$HOME/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steamapps/content"
+GIVEN=""; DATA=""; APPS=""; NODL=""; U_BRANCH=main; IN_PLACE=""; SKIP_BUILD=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --games) WANT="$(echo "$2" | tr ',' ' ')"; shift 2;;
-    --steam-dir) STEAM="$2"; shift 2;;
-    --gta3-dir) DIR_gta3="$2"; shift 2;; --vc-dir) DIR_vc="$2"; shift 2;; --sa-dir) DIR_sa="$2"; shift 2;;
+    --game-dir) GIVEN="$2"; shift 2;;
+    --data-dir) DATA="$2"; shift 2;;
     --app-dir) APPS="$2"; shift 2;;
     --branch) U_BRANCH="$2"; shift 2;;
+    --depots) DEPOTS="$2"; shift 2;;
     --no-downloads) NODL=--no-downloads; shift;;
     --in-place) IN_PLACE=1; shift;;
     --skip-build) SKIP_BUILD=1; shift;;
-    --game-dir) DIR_gta3="$2"; WANT="${WANT:-gta3}"; shift 2;;   # the single-game GTA III installer's (its apps' updaters)
-    --data-dir) echo "   (--data-dir is no longer used: the data folders are ~/Games/GTA3Native, GTAVCNative, GTASANative)"; shift 2;;
-    -h|--help) sed -n '2,22p' "$0" | cut -c3-; exit 0;;
+    -h|--help) sed -n '2,29p' "$0" | cut -c3-; exit 0;;
     *) echo "unknown option $1 (see install.sh --help)"; exit 1;;
   esac
 done
 [[ "$U_BRANCH" == main || "$U_BRANCH" == nightly ]] || { echo "--branch must be main or nightly"; exit 1; }
-[[ $(uname -s) == Darwin ]] || { echo "the GTA ports are macOS only for now"; exit 1; }
-for g in $WANT; do case "$g" in gta3|vc|sa) ;; *) echo "--games: unknown game $g (gta3, vc, sa)"; exit 1;; esac; done
+[[ $(uname -s) == Darwin ]] || { echo "the Ghost Recon port is macOS only for now"; exit 1; }
+DATA="${DATA:-$HOME/Games/GhostReconNative}"; mkdir -p "$DATA"; DATA="$(cd "$DATA" && pwd)"
+IMPORTED="$DATA/game-files/GhostRecon"
+BASE_DEPOT="$DEPOTS/app_15300/depot_15301"
+copy() { cp -cR "$1" "$2" 2>/dev/null || cp -R "$1" "$2"; }   # an APFS clone where it can be
 
-# each game: its name, the binary the build makes, its executable, data folder, folder name, Steam bundle, build id
-game_info() {
-  case "$1" in
-    gta3) G_NAME="Grand Theft Auto III"; G_BIN=GTA3; G_EXE=gta3.exe; G_DATA="$HOME/Games/GTA3Native"; G_FOLDER=GTAIII
-          G_STEAM="grand theft auto 3/Grand Theft Auto 3.app"; G_BUILD=gta3;;
-    vc)   G_NAME="Grand Theft Auto: Vice City"; G_BIN=GTAVC; G_EXE=gta-vc.exe; G_DATA="$HOME/Games/GTAVCNative"; G_FOLDER="Grand Theft Auto Vice City"
-          G_STEAM="grand theft auto - vice city/Grand Theft Auto - Vice City.app"; G_BUILD=gtavc;;
-    sa)   G_NAME="Grand Theft Auto: San Andreas"; G_BIN=GTASA; G_EXE=gta_sa.exe; G_DATA="$HOME/Games/GTASANative"; G_FOLDER="GTA San Andreas"
-          G_STEAM="grand theft auto - san andreas/Grand Theft Auto - San Andreas.app"; G_BUILD=gtasa;;
-  esac
-  G_STEAM_DIR="$STEAM/$G_STEAM/Contents/Resources/transgaming/c_drive/Program Files/Rockstar Games/$G_FOLDER"
-  G_IMPORTED="$G_DATA/game-files/$G_FOLDER"
-  G_DEPOT=""   # Vice City: the Windows depot Steam's console downloads (the Mac copy's exe is SecuROM'd: never used)
-  [ "$1" = vc ] && G_DEPOT="$HOME/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steamapps/content/app_12110/depot_12111"
-}
-given_dir() { case "$1" in gta3) echo "$DIR_gta3";; vc) echo "$DIR_vc";; sa) echo "$DIR_sa";; esac; }
-find_game() {   # find_game <id>: the game folder (an explicit one, else the imported copy, else Steam's), or nothing
-  game_info "$1"; local d; d="$(given_dir "$1")"
-  if [ -n "$d" ]; then if [ -f "$d/$G_EXE" ]; then (cd "$d" && pwd); fi
-  elif [ -f "$G_IMPORTED/$G_EXE" ]; then echo "$G_IMPORTED"
-  elif [ -n "$G_DEPOT" ] && [ -f "$G_DEPOT/$G_EXE" ]; then echo "$G_DEPOT"
-  elif [ -z "$G_DEPOT" ] && [ -f "$G_STEAM_DIR/$G_EXE" ]; then echo "$G_STEAM_DIR"; fi
-  return 0
-}
-if [ -z "$WANT" ]; then
-  for g in gta3 vc sa; do [ -n "$(find_game $g)" ] && WANT="$WANT $g"; done
-  [ -n "$WANT" ] || { echo "no GTA III, Vice City or San Andreas found under $STEAM (use --steam-dir or --gta3-dir/--vc-dir/--sa-dir)"; exit 1; }
-  echo "== found:$WANT"
+# ---------------------------------------------------------------- the game: given, imported, or the depot
+if [ -n "$GIVEN" ]; then
+  [ -f "$GIVEN/GhostRecon.exe" ] || { echo "no GhostRecon.exe in $GIVEN"; exit 1; }
+  GAME="$(cd "$GIVEN" && pwd)"
+elif [ -f "$IMPORTED/GhostRecon.exe" ]; then GAME="$IMPORTED"
+elif [ -f "$BASE_DEPOT/GhostRecon.exe" ]; then GAME="$BASE_DEPOT"
+else
+  echo "no Ghost Recon found: not in $IMPORTED nor in $BASE_DEPOT"
+  echo "download it in Steam's console (steam://open/console): download_depot 15300 15301 (or use --game-dir)"; exit 1
 fi
-
-NAME="GTA Classics"; ID=com.joshspeakman.gta-classics
-[[ "$U_BRANCH" == nightly ]] && { NAME="$NAME Nightly"; ID=$ID.nightly; }
-APPS="${APPS:-$HOME/Applications}"; A="$APPS/$NAME.app"; CLASSICS="$HOME/Games/GTAClassics"
-copy() { cp -cRL "$1" "$2" 2>/dev/null || cp -RL "$1" "$2"; }   # an APFS clone where it can be
-
-DONE=""   # the games built (or, with --skip-build, taken from recomp/work) this time; their folders in GAME_<id>
-for g in $WANT; do
-  game_info $g; GAME="$(find_game $g)"
-  [ -n "$GAME" ] || { W="$(given_dir $g)"; echo "== $G_NAME: no $G_EXE in ${W:-$G_IMPORTED or $G_STEAM_DIR}: skipped"; continue; }
-  [ -x "$HERE/recomp/build_$G_BUILD.sh" ] || { echo "== $G_NAME: not ported in this checkout yet (no recomp/build_$G_BUILD.sh): skipped"; continue; }
-  OUT="$HERE/recomp/work/$G_BUILD"
-  if [ -n "$SKIP_BUILD" ] && { [ ! -x "$OUT/app/$G_BIN" ] || [ ! -f "$OUT/$G_EXE" ]; }; then
-    echo "== $G_NAME: --skip-build but no build in $OUT (app/$G_BIN, $G_EXE): skipped"; continue
+echo "== Ghost Recon: $GAME"
+if [ -z "$IN_PLACE" ] && [ "$GAME" != "$IMPORTED" ]; then
+  if [ -f "$IMPORTED/GhostRecon.exe" ]; then
+    echo "== $IMPORTED is already there: used as it is (move it away to import $GAME again)"
+  else
+    echo "== copying Ghost Recon from $GAME into $IMPORTED"
+    mkdir -p "$DATA/game-files"; rm -rf "$IMPORTED.part"; copy "$GAME" "$IMPORTED.part"
+    mv "$IMPORTED.part" "$IMPORTED"
+    echo "== Ghost Recon is read from $IMPORTED: $GAME is no longer needed (delete it to free the space)"
   fi
-  mkdir -p "$G_DATA"
-  # the Mac release's wrapper: the app bundle around the game folder (its icon) and its c_drive (GTA III's radio and
-  # cutscene audio in c_drive/Audio, San Andreas's C runtime DLLs in c_drive/windows/system32); Steam's copy is used
-  # when the game comes from the data folder
-  SRC="$GAME"; [ "$GAME" = "$G_IMPORTED" ] && [ -d "$G_STEAM_DIR" ] && SRC="$G_STEAM_DIR"
-  WRAP_RES="$(cd "$SRC/../../../../.." 2>/dev/null && pwd || true)"; CDRIVE="$(cd "$SRC/../../.." 2>/dev/null && pwd || true)"
-  ICNS="$(ls "$WRAP_RES"/*.icns 2>/dev/null | head -1 || true)"
-  [ -n "$ICNS" ] && { mkdir -p "$G_DATA/art"; cp "$ICNS" "$G_DATA/art/icon.icns"; }
-  if [ -z "$IN_PLACE" ]; then case "$GAME/" in "$G_DATA"/*) ;; *)
-    GF="$G_IMPORTED"; echo "== copying $G_NAME from $GAME into $GF"
-    mkdir -p "$G_DATA/game-files"; rm -rf "$GF.part"; copy "$GAME" "$GF.part"
-    rm -rf "$GF"; mv "$GF.part" "$GF"
-    echo "== $G_NAME is read from $GF: $GAME is no longer needed (delete it to free the space)"; GAME="$GF";;
-  esac; fi
-  if [ $g = gta3 ]; then   # the radio stations and cutscene audio: the game asks for them on its "CD" (C:\Audio, the game's audio/)
-    if [ -n "$CDRIVE" ] && [ -f "$CDRIVE/Audio/HEAD.WAV" ] && [ ! -f "$GAME/audio/HEAD.WAV" ]; then
-      echo "== copying the radio and cutscene audio from $CDRIVE/Audio"
-      mkdir -p "$GAME/audio"; for f in "$CDRIVE/Audio"/*; do [ -e "$GAME/audio/$(basename "$f")" ] || copy "$f" "$GAME/audio/"; done
-    fi
-    [ -f "$GAME/audio/HEAD.WAV" ] || echo "   (no radio audio found: the game will ask for its second disc; copy c_drive/Audio into $GAME/audio)"
-  fi
-  if [ $g = sa ]; then     # the Visual C++ 7.1 runtime the game loads (recompiled with it) from beside gta_sa.exe
-    for d in msvcr71.dll msvcp71.dll; do
-      [ -f "$GAME/$d" ] || { [ -f "$CDRIVE/windows/system32/$d" ] && copy "$CDRIVE/windows/system32/$d" "$GAME/$d"; } || true
-      [ -f "$GAME/$d" ] || echo "   (no $d beside the game or in the wrapper's windows/system32: the game won't start)"
-    done
-  fi
-  if [ -z "$SKIP_BUILD" ]; then
-    echo "== recompiling $G_NAME from $GAME (a few minutes)"
-    "$HERE/recomp/build_$G_BUILD.sh" "$GAME" "$OUT"
-  fi
-  [ -x "$OUT/app/$G_BIN" ] && [ -f "$OUT/$G_EXE" ] || { echo "== $G_NAME: the build made no $OUT/app/$G_BIN"; exit 1; }
-  eval "GAME_$g=\$GAME"; DONE="$DONE $g"
+  GAME="$IMPORTED"
+fi
+# the expansions: each depot's Mods/<MpN> merged into the game's Mods (they don't overlap), its readme and manual
+# into Docs/ (as Steam installs them)
+for x in "13620 13621 Mp1 Desert Siege" "13630 13631 Mp2 Island Thunder"; do
+  set -- $x; APP=$1; DEP=$2; MOD=$3; shift 3; XNAME="$*"; D="$DEPOTS/app_$APP/depot_$DEP"
+  if [ -d "$GAME/Mods/$MOD" ]; then echo "== $XNAME: $GAME/Mods/$MOD"; continue; fi
+  if [ ! -d "$D/Mods/$MOD" ]; then echo "== $XNAME: not found (download_depot $APP $DEP in Steam's console): its card stays dimmed"; continue; fi
+  if [ -n "$IN_PLACE" ]; then echo "== $XNAME: found in $D, but --in-place copies nothing: merge $D/Mods/$MOD into $GAME/Mods to play it"; continue; fi
+  echo "== $XNAME: merging $D/Mods/$MOD into $GAME/Mods"
+  rm -rf "$GAME/Mods/$MOD.part"; copy "$D/Mods/$MOD" "$GAME/Mods/$MOD.part"; mv "$GAME/Mods/$MOD.part" "$GAME/Mods/$MOD"
+  mkdir -p "$GAME/Docs"
+  for f in "$D"/*.txt "$D"/*.pdf; do
+    if [ -f "$f" ] && [ ! -e "$GAME/Docs/$(basename "$f")" ]; then copy "$f" "$GAME/Docs/"; fi
+  done
 done
+
+# ---------------------------------------------------------------- the build
+OUT="$HERE/recomp/work/gr"
+if [ -z "$SKIP_BUILD" ]; then
+  echo "== recompiling Ghost Recon from $GAME (around fifteen minutes)"
+  "$HERE/recomp/build_gr.sh" "$GAME" "$OUT"
+fi
+[ -x "$OUT/app/GhostRecon" ] && [ -f "$OUT/GhostRecon.exe" ] || { echo "== the build made no $OUT/app/GhostRecon"; exit 1; }
 
 # ---------------------------------------------------------------- the app: staged beside, then swapped in
+NAME="Ghost Recon"; ID=com.joshspeakman.ghost-recon
+[[ "$U_BRANCH" == nightly ]] && { NAME="$NAME Nightly"; ID=$ID-nightly; }
+APPS="${APPS:-$HOME/Applications}"; mkdir -p "$APPS"; APPS="$(cd "$APPS" && pwd)"; A="$APPS/$NAME.app"
 U_BUILT="$(git -C "$HERE" rev-parse HEAD 2>/dev/null || true)"
-OLD_GAMES="$A/Contents/Resources/games.plist"
-pl() { plutil -extract "$2" raw -o - "$1" 2>/dev/null || true; }   # pl <plist> <key.path>: a string, or nothing
-KEEP=""   # games in the installed app that weren't rebuilt now: carried over as they are
-for g in gta3 vc sa; do
-  case " $DONE " in *" $g "*) continue;; esac
-  game_info $g; [ -f "$OLD_GAMES" ] && [ -n "$(pl "$OLD_GAMES" $g.bin)" ] && [ -x "$A/Contents/MacOS/$G_BIN" ] && KEEP="$KEEP $g"
-done
-[ -n "$DONE$KEEP" ] || { echo "nothing to install: no game was built (see above)"; exit 1; }
-echo "== installing $A (built now:${DONE:- none}; kept:${KEEP:- none})"
+echo "== installing $A"
 STAGE="$HERE/build/stage/$NAME.app"; rm -rf "$STAGE"; mkdir -p "$STAGE/Contents/MacOS" "$STAGE/Contents/Resources"
-clang -O2 -fobjc-arc -Wall -framework Cocoa -o "$STAGE/Contents/MacOS/GTAClassics" "$HERE/recomp/host/classics_launcher.m"
-G="$STAGE/Contents/Resources/games.plist"; plutil -create xml1 "$G"
-for g in gta3 vc sa; do
-  game_info $g
-  case " $DONE " in
-    *" $g "*) OUT="$HERE/recomp/work/$G_BUILD"; eval "GAME=\$GAME_$g"; BUILT="$U_BUILT"
-              cp "$OUT/app/$G_BIN" "$STAGE/Contents/MacOS/"; cp "$OUT/$G_EXE" "$STAGE/Contents/Resources/"   # your copy, this Mac only
-              for f in shaders.metal dsr_snapshot.bin; do cp "$OUT/app/$f" "$STAGE/Contents/MacOS/"; done;;
-    *) case " $KEEP " in *" $g "*) ;; *) continue;; esac
-       GAME="$(pl "$OLD_GAMES" $g.game)"; G_DATA="$(pl "$OLD_GAMES" $g.data)"; BUILT="$(pl "$OLD_GAMES" $g.built)"
-       cp "$A/Contents/MacOS/$G_BIN" "$STAGE/Contents/MacOS/"; cp "$A/Contents/Resources/$G_EXE" "$STAGE/Contents/Resources/"
-       for f in shaders.metal dsr_snapshot.bin; do [ -f "$STAGE/Contents/MacOS/$f" ] || cp "$A/Contents/MacOS/$f" "$STAGE/Contents/MacOS/"; done;;
-  esac
-  plutil -insert $g -dictionary "$G"
-  plutil -insert $g.name -string "$G_NAME" "$G"; plutil -insert $g.bin -string "$G_BIN" "$G"; plutil -insert $g.exe -string "$G_EXE" "$G"
-  plutil -insert $g.game -string "$GAME" "$G"; plutil -insert $g.data -string "$G_DATA" "$G"; plutil -insert $g.built -string "$BUILT" "$G"
-  INSTALLED="${INSTALLED:-} $g"
+clang -O2 -fobjc-arc -Wall -DGR_LAUNCHER_APP -framework Cocoa -o "$STAGE/Contents/MacOS/GhostReconLauncher" "$HERE/recomp/host/gr_launcher.m"
+cp "$OUT/app/GhostRecon" "$STAGE/Contents/MacOS/"
+for f in shaders.metal dsr_snapshot.bin; do cp "$OUT/app/$f" "$STAGE/Contents/MacOS/"; done
+cp "$OUT/GhostRecon.exe" "$STAGE/Contents/Resources/"          # the unwrapped executable: your copy, this Mac only
+# launch.plist: the folders, for the launch window and for the game opened on its own (main.m bundle_launch)
+P="$STAGE/Contents/Resources/launch.plist"; plutil -create xml1 "$P"
+plutil -insert game -string "$GAME" "$P"; plutil -insert data -string "$DATA" "$P"
+plutil -insert exe -string GhostRecon.exe "$P"; plutil -insert bin -string GhostRecon "$P"; plutil -insert log -string GhostRecon "$P"
+plutil -insert branch -string "$U_BRANCH" "$P"; plutil -insert built -string "$U_BUILT" "$P"
+# the launch window's art (tools/gr_art.py) for all three campaigns, installed or not (a card shows it either way)
+for g in gr ds it; do
+  if python3 -I "$HERE/recomp/tools/gr_art.py" $g "$DATA/art/$g" $NODL >/dev/null 2>&1 && ls "$DATA/art/$g/"*.jpg >/dev/null 2>&1; then
+    mkdir -p "$STAGE/Contents/Resources/art/$g"; cp "$DATA/art/$g/hero.jpg" "$DATA/art/$g/shot1.jpg" "$STAGE/Contents/Resources/art/$g/" 2>/dev/null || true
+  else echo "   (no art for the $g card: the launch window draws plain colours)"; fi
 done
-# the launch window's art (tools/gta_art.py) for all three games, installed or not (a game's card shows it either way)
-for g in gta3 vc sa; do
-  if python3 -I "$HERE/recomp/tools/gta_art.py" $g "$CLASSICS/art/$g" $NODL >/dev/null 2>&1 && ls "$CLASSICS/art/$g/"*.jpg >/dev/null 2>&1; then
-    mkdir -p "$STAGE/Contents/Resources/art/$g"; cp "$CLASSICS/art/$g/"*.jpg "$CLASSICS/art/$g/"*.png "$STAGE/Contents/Resources/art/$g/" 2>/dev/null || true
-  else echo "   (no art for $g's card: the launch window writes its title)"; fi
-done
-# the icon: GTA III's Mac release's (kept in its data folder's art/), else Vice City's or San Andreas's, else the
-# Windows executable's
-ICON=""; for g in gta3 vc sa; do game_info $g; [ -z "$ICON" ] && [ -f "$G_DATA/art/icon.icns" ] && ICON="$G_DATA/art/icon.icns"; done
-if [ -n "$ICON" ]; then cp "$ICON" "$STAGE/Contents/Resources/icon.icns"
-else
-  I="$(mktemp -d)"; set -- $INSTALLED; game_info $1
-  if python3 "$HERE/recomp/tools/extract_icon.py" "$STAGE/Contents/Resources/$G_EXE" "$I/g.ico" 2>/dev/null && sips -s format png "$I/g.ico" --out "$I/g.png" >/dev/null 2>&1; then
-    sips -z 512 512 "$I/g.png" --out "$I/g512.png" >/dev/null && sips -s format icns "$I/g512.png" --out "$STAGE/Contents/Resources/icon.icns" >/dev/null 2>&1 || true
+# the icon: the game's own Ghost.ico, else the executable's
+I="$(mktemp -d)"
+if { [ -f "$GAME/Ghost.ico" ] && cp "$GAME/Ghost.ico" "$I/g.ico"; } || python3 "$HERE/recomp/tools/extract_icon.py" "$OUT/GhostRecon.exe" "$I/g.ico" 2>/dev/null; then
+  if sips -s format png "$I/g.ico" --out "$I/g.png" >/dev/null 2>&1; then
+    sips -z 512 512 "$I/g.png" --out "$I/g512.png" >/dev/null 2>&1 && sips -s format icns "$I/g512.png" --out "$STAGE/Contents/Resources/icon.icns" >/dev/null 2>&1 || true
   fi
-  rm -rf "$I"
 fi
+rm -rf "$I"; [ -f "$STAGE/Contents/Resources/icon.icns" ] || echo "   (no icon could be made from Ghost.ico or the executable)"
 # updates from the launch window: the commit this app was built from and the checkout it was installed from; the
-# updater rebuilds every game in the app (each from the folder it was installed from) from the branch it follows
+# updater rebuilds the app (from the game folder it was installed from) from the branch it follows
 U_WORK=stable; [[ "$U_BRANCH" == nightly ]] && U_WORK=nightly
 U_REPO="$(git -C "$HERE" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"; U_REPO="${U_REPO%/.git}"
 if [ -n "$U_REPO" ] && [ -n "$U_BUILT" ] && git -C "$U_REPO" remote get-url origin >/dev/null 2>&1; then
-  U_ARGS="--games $(echo $INSTALLED | tr ' ' ',')"; U_INPLACE=""
-  for g in $INSTALLED; do
-    game_info $g; GAME="$(pl "$G" $g.game)"; U_ARGS="$U_ARGS --$g-dir $(printf '%q' "$GAME")"
-    case "$GAME/" in "$(pl "$G" $g.data)"/*) ;; *) U_INPLACE=" --in-place";; esac
-  done
+  U_ARGS="--game-dir $(printf '%q' "$GAME") --data-dir $(printf '%q' "$DATA") --app-dir $(printf '%q' "$APPS") --branch $U_BRANCH"
+  [ -n "$IN_PLACE" ] && U_ARGS="$U_ARGS --in-place"
+  [ -n "$NODL" ] && U_ARGS="$U_ARGS $NODL"
   cat > "$STAGE/Contents/MacOS/update" <<UPDATE
 #!/bin/bash
 # $NAME updater (generated by install.sh): "update --check" prints the newest commit of $U_BRANCH on GitHub;
@@ -204,7 +155,7 @@ if [ -e "\$W/.git" ]; then git -C "\$W" checkout -q -f --detach "origin/\$BRANCH
 else mkdir -p "\$REPO/build"; git -C "\$REPO" worktree add -q -f --detach "\$W" "origin/\$BRANCH"; fi
 echo "== \$BRANCH: \$(git -C "\$W" log -1 --format='%h %s')"
 [ -e "\$W/recomp/.venv" ] || [ ! -e "\$REPO/recomp/.venv" ] || ln -s "\$(readlink "\$REPO/recomp/.venv" 2>/dev/null || echo "\$REPO/recomp/.venv")" "\$W/recomp/.venv"   # share the tools
-exec "\$W/install.sh" $U_ARGS --app-dir $(printf '%q' "$APPS") --branch $U_BRANCH$U_INPLACE $NODL
+exec "\$W/install.sh" $U_ARGS
 UPDATE
   chmod +x "$STAGE/Contents/MacOS/update"
 fi
@@ -215,7 +166,7 @@ cat > "$STAGE/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>$NAME</string>
   <key>CFBundleDisplayName</key><string>$NAME</string>
   <key>CFBundleIdentifier</key><string>$ID</string>
-  <key>CFBundleExecutable</key><string>GTAClassics</string>
+  <key>CFBundleExecutable</key><string>GhostReconLauncher</string>
   <key>CFBundleIconFile</key><string>icon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${U_BUILT:0:7}</string>
@@ -224,12 +175,12 @@ cat > "$STAGE/Contents/Info.plist" <<PLIST
   <key>GCSupportsGameMode</key><true/>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
-  <key>GTACBranch</key><string>$U_BRANCH</string>
-  <key>GTACBuilt</key><string>$U_BUILT</string>
+  <key>GRBranch</key><string>$U_BRANCH</string>
+  <key>GRBuilt</key><string>$U_BUILT</string>
 </dict></plist>
 PLIST
 codesign --force --deep --sign - "$STAGE" >/dev/null 2>&1 || true
-mkdir -p "$APPS"; rm -rf "$A"; mv "$STAGE" "$A"
+rm -rf "$A"; mv "$STAGE" "$A"
 touch "$A"                                                    # Finder and the Dock pick up the new icon
-L=""; for g in $INSTALLED; do game_info $g; L="${L:+$L, }$G_NAME"; done
-echo "== done: $A ($L)"
+C=""; for m in Mp1:"Desert Siege" Mp2:"Island Thunder"; do if [ -d "$GAME/Mods/${m%%:*}" ]; then C="$C, ${m#*:}"; fi; done
+echo "== done: $A (Ghost Recon$C; game $GAME, data $DATA)"
