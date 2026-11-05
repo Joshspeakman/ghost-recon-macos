@@ -42,6 +42,10 @@ chosen mode.
 - DirectSound: `IDirectSoundNotify` (the music/voice streams wait on notification events, set from the render
   callback as the play cursor passes them).
 - DirectInput 8 is fed by the Mac host (mouse motion, buttons, wheel, keys); it was only fed on Linux before.
+- Renderer (from gta-classics f270d68): Direct3D vertex lighting (characters, props: FVF with normals, lighting on)
+  and per-stage texture-coordinate sets. Terrain is FVF `0x242` (two sets): stage 0 the map's colour layer on set 0,
+  stage 1 the tiling detail on set 1 (`D3DTSS_TEXCOORDINDEX` 1); with only set 0 the detail was smeared over the whole
+  map and the ground looked flat brown. `DSR_DRAWLOG=1` lists each kind of draw once.
 
 ## Testing
 
