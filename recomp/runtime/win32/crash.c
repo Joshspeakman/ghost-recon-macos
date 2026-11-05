@@ -213,7 +213,7 @@ const char *w32_crash_report(const char *kind, const char *reason, Ctx *c, uint3
     uint64_t now = now_ns();
     char when[64]; strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S %Z", &tm);
     int hang = !strcmp(kind, "hang");
-    dprintf(fd, "Dungeon Siege Native - %s report\n%s\n\n", hang ? "not responding" : "crash", when);
+    dprintf(fd, "%s (native) - %s report\n%s\n\n", DS2_TITLE, hang ? "not responding" : "crash", when);
     dprintf(fd, "WHAT HAPPENED\n  %s\n", reason);
     if (guest_pc) { char d[160]; describe_guest(d, sizeof d, guest_pc); dprintf(fd, "  where: %s\n", d); }
     dprintf(fd, "  %.0f s after launch; %llu frames presented (last %.1f s ago); messages last pumped %.1f s ago\n\n",

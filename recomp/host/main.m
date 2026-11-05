@@ -678,7 +678,7 @@ static void *game_thread(void *arg)
         capture(0);
         if (path && !test_mode) {
             [win orderOut:nil]; [NSApp setPresentationOptions:NSApplicationPresentationDefault];
-            show_report_alert(@"Dungeon Siege stopped unexpectedly.", path);
+            show_report_alert([NSString stringWithFormat:@"%s stopped unexpectedly.", DS2_TITLE], path);
         }
         exit((int)code);
     });
@@ -694,7 +694,7 @@ static void report_from_last_session(const char *data)
         if (([f hasPrefix:@"crash-"] || ([f hasPrefix:@"hang-"] && ![f hasPrefix:@"hang-recovered-"])) && (!newest || [f compare:newest] == NSOrderedDescending)) newest = f;
     if (!newest || [newest compare:seen] != NSOrderedDescending) return;
     [newest writeToFile:marker atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    show_report_alert([newest hasPrefix:@"hang-"] ? @"Last time, Dungeon Siege stopped responding." : @"Last time, Dungeon Siege stopped unexpectedly.",
+    show_report_alert([newest hasPrefix:@"hang-"] ? [NSString stringWithFormat:@"Last time, %s stopped responding.", DS2_TITLE] : [NSString stringWithFormat:@"Last time, %s stopped unexpectedly.", DS2_TITLE],
                       [dir stringByAppendingPathComponent:newest]);
 }
 static void on_objc_exception(NSException *e)
