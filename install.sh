@@ -18,7 +18,7 @@
 # --game-dir names the GhostRecon folder (the one holding GhostRecon.exe) to import from instead of the depot.
 # --in-place reads the game from where it is found and copies nothing: an expansion is then only played if its Mods
 # folder is already in that game folder.
-# Saves stay in the game's own Mods/Origmiss/Save; the launch window's choices in <data>/launcher.plist. The window's
+# Saves and settings go to <data>/game (mods/<mod>/save per campaign); the launch window's choices to <data>/launcher.plist. The window's
 # art comes from the Steam store pages (recomp/tools/gr_art.py, into <data>/art; --no-downloads draws plain colours);
 # the app's icon is the game's own (Ghost.ico). The app's updater (Updates in the launch window) rebuilds it from the
 # branch it follows. Needs clang and python3 (the Xcode command line tools); the recompiler installs capstone with pip
