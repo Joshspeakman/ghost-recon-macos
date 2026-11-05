@@ -555,6 +555,41 @@ static void window_changed(uint32_t hwnd, int x, int y, int w, int h, int visibl
 /* The game's resolution lives in DungeonSiege2.ini (width/height at the top, before any [section]). With none set, use
  * this screen's size (in points); DS_RESOLUTION=WxH sets it explicitly. Test runs keep the game's own default unless
  * DS_RESOLUTION is given. */
+#ifdef GR_EDITION
+/* Ghost Recon: the launch window's choices, in the game's own files in the data folder's copy of the game folder
+ * (<data>/game, where its writes go). GR_CAMPAIGN=gr|ds|it: the active mods (modsset.txt, as the Options > Mods
+ * screen writes it: none for Ghost Recon, \mods\mp1 Desert Siege, \mods\mp2 Island Thunder); unset, the game's own
+ * choice stands. GTA_MODE=WxH: options.xml's VideoResolution (32-bit), so the game opens at the launch window's
+ * resolution; empty ("As Set in Game") or unset, it is left alone. */
+static void gr_prepare(const char *overlay)
+{
+    @autoreleasepool {
+        NSString *dir = @(overlay);
+        const char *camp = getenv("GR_CAMPAIGN");
+        if (camp && *camp) {
+            NSString *mods = !strcmp(camp, "ds") ? @"\"\\mods\\mp1\"\r\n" : !strcmp(camp, "it") ? @"\"\\mods\\mp2\"\r\n" : @"";
+            NSString *t = [@"// MODS SETTINGS - LIST OF MODS ACTIVE ON THIS SYSTEM\r\n" stringByAppendingString:mods];
+            [t writeToFile:[dir stringByAppendingPathComponent:@"modsset.txt"] atomically:YES encoding:NSWindowsCP1252StringEncoding error:nil];
+            fprintf(stderr, "GhostRecon: campaign %s\n", camp);
+        }
+        unsigned w, h; const char *m = getenv("GTA_MODE");
+        if (m && sscanf(m, "%ux%u", &w, &h) == 2 && w >= 640 && h >= 480) {
+            NSString *path = [dir stringByAppendingPathComponent:@"options.xml"];
+            NSString *res = [NSString stringWithFormat:@"<VideoResolution Width = \"%u\" Height = \"%u\" BitDepth = \"32\"/>", w, h];
+            NSString *x = [NSString stringWithContentsOfFile:path encoding:NSWindowsCP1252StringEncoding error:nil];
+            NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"<VideoResolution[^>]*/>" options:0 error:nil];
+            if (x && [re firstMatchInString:x options:0 range:NSMakeRange(0, x.length)])
+                x = [re stringByReplacingMatchesInString:x options:0 range:NSMakeRange(0, x.length) withTemplate:[NSRegularExpression escapedTemplateForString:res]];
+            else if (!x)   /* first run: the game fills in every other setting with its defaults (mipmapping stays off: with
+                                                    * it on, the game's own mip path crashes on character/allied/head.rsb) */
+                x = [NSString stringWithFormat:@"<OptionsFile>\r\n\t<Graphics>\r\n\t\t<FullScreen>TRUE</FullScreen>\r\n\t\t%@\r\n"
+                     "\t\t<ZBufferBits>24</ZBufferBits>\r\n\t</Graphics>\r\n</OptionsFile>\r\n", res];
+            if (x) [x writeToFile:path atomically:YES encoding:NSWindowsCP1252StringEncoding error:nil];
+            fprintf(stderr, "GhostRecon: video mode %ux%u\n", w, h);
+        }
+    }
+}
+#endif
 static void ensure_resolution(const char *drive_c)
 {
     char dir[1200], path[1300];
@@ -788,6 +823,9 @@ int main(int argc, char **argv)
         }
         w32_crash_init(data, DS_BUILD); w32_crash_thread("macOS UI thread");
         { void w32_registry_install(const char *); w32_registry_install(data); }   /* values the game's installer would have written */
+#ifdef GR_EDITION
+        gr_prepare(overlay);
+#endif
         NSSetUncaughtExceptionHandler(on_objc_exception);
 #if !defined(DF_EDITION) && !defined(GTA_EDITION)
         ensure_resolution(drive_c);                                   // DungeonSiege2.ini
