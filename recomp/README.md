@@ -1,40 +1,86 @@
-# Recompiler: Delta Force and Delta Force 2 as native code
+# Recompiler: Ghost Recon as native code
 
-Static recompilation of the user's own Steam `Df.exe` / `Df2.exe` (and the NovaLogic DLLs in the game folder) into C,
-compiled for Apple Silicon or Linux x86-64. Nothing derived from the games is committed: `build_df.sh` regenerates
-everything locally from the user's files. Installing and playing: [README](../README.md); what was specific to these
-games and what was checked on each platform: [docs/DF-PORT.md](../docs/DF-PORT.md).
+Static recompilation of the user's own Steam `GhostRecon.exe` 1.4 into C, compiled for Apple Silicon. The same program
+plays Ghost Recon, Desert Siege and Island Thunder (the expansions are mod folders for it). Nothing derived from the
+game is committed: `build_gr.sh` regenerates everything locally from the user's files, in `work/` (ignored by git).
+
+Installing and playing: [README](../README.md). What was specific to this game, the runtime changes it needed and how
+each part was checked: [docs/GR-PORT.md](../docs/GR-PORT.md).
 
 ```sh
-recomp/build_df.sh "/path/to/Delta Force 2"      # -> recomp/work/df2
+recomp/build_gr.sh ~/Games/GhostReconNative/game-files/GhostRecon     # -> recomp/work/gr
+recomp/run_gr.sh                                                       # test mode
 ```
 
-`build_df.sh` checks the executable's SHA-256 (Steam builds 19311 and 19312 only), undoes SteamStub 2.1 on a copy
-(`tools/steamstub21.py`), analyses and lifts it, does the same for `Netsock.dll`, `Cmprssh0.dll` (rebased to
-0x11000000) and, for Delta Force 2, `Hw_d3d.dll` (0x12000000), compiles everything in parallel and links it with the
-runtime (`tools/build_runtime.sh`: Metal on macOS, SDL/OpenGL on Linux). `DF_RELINK=1` keeps the lifted objects and
-rebuilds only the runtime and host.
+## The build
 
-The recompiler (analysis, lifter, execution model, x87, indirect calls, test harnesses) was inherited from the
-Dungeon Siege II port and works unchanged here; the runtime still carries modules of the earlier ports (Direct3D 9,
-HLSL, Miles, DirectPlay 8) that these games don't load.
+`build_gr.sh <GhostRecon folder> [outdir]`:
 
-## Status
+1. Checks `GhostRecon.exe`'s SHA-256 (Steam app 15300, depot 15301, version 1.4 only).
+2. Sets up `recomp/.venv` the first time (Capstone, and Unicorn for the tests).
+3. Undoes SteamStub 2.0 on a copy in the build folder (`tools/steamstub20.py`). The original stays untouched.
+4. **Analysis** (`tools/analyze.py`): finds every function, jump table and SEH scope (40,045 functions).
+5. **Lifting** (`tools/lift.py --game gr`): one C function per original function, in `lift_*.c`. Then
+   `tools/link_tables.py` builds the address → function table.
+6. **Compiling**: the lifted C in parallel (`GR_BUILD_JOBS`, default all cores) through `tools/cc1.sh`.
+7. **Runtime and link** (`tools/build_runtime.sh`): the Win32 runtime (`runtime/`), the Metal renderer
+   (`../src/renderer`) and the Mac host (`host/main.m`, `host/gr_launcher.m`), into `work/gr/app/GhostRecon`.
 
-| Part | State |
+`GR_RELINK=1` keeps the lifted objects and redoes only step 7, for runtime, renderer or host changes (a minute
+instead of a quarter of an hour). `../install.sh` runs all of this and assembles the app bundle around the result.
+
+## Layout
+
+| | |
 |---|---|
-| Analysis and lifting (`tools/analyze.py`, `tools/lift.py`) | both executables and their DLLs; Watcom C (DF1) and MSVC 5 + MASM (DF2) specifics, self-modifying span renderers (`smc_scan`, code slots): see [docs/DF-PORT.md](../docs/DF-PORT.md) |
-| Game-specific hooks (`tools/lift.py` `DF_HOOKS` / `DF_OVERRIDES`, `runtime/win32/df_hooks.c`) | one table and one runtime module per feature: `df_net.c` (multiplayer, NovaWorld), `df_frame.c` (high frame rates), `df_res.c` (screen shapes; arrays moved with `DF_MOVED`), `df_hw.c` (DF1 Full Screen Hardware) |
-| DirectDraw and Direct3D 6 (`runtime/win32/ddraw_pal.c`, from the Diablo II port) on the renderer in `../src/renderer` | 8/16/32-bit surfaces, palettes, DF2's Direct3D driver, CPU-written depth buffers (`DSR_DEPTH_UPLOAD`) |
-| Sound | the games' streaming DirectSound buffer on Core Audio (SDL on Linux); DF2's MSACM ADPCM decoded in `df_imports.c` |
-| Network | `Netsock.dll` recompiled over `winsock.c` (UDP 3568); `p2p_dht.c` (the NovaWorld list), `portmap.c` (NAT-PMP, UPnP) |
-| Host (`host/main.m`, `host/linux.c`), launch window (`host/launcher.m`), sandbox | working on macOS (Apple Silicon) and Linux |
+| `tools/` | the recompiler (`analyze.py`, `lift.py`, `link_tables.py`), SteamStub (`steamstub20.py`), build and app scripts, `gr_art.py` (launch-window art from the Steam store pages) |
+| `runtime/` | the execution core (`rt.c`, `rt.h`: memory, x87, flags, calls) |
+| `runtime/win32/` | the Windows the game sees: kernel32 and user32 (files, threads, events, messages), Direct3D 8 (`d3d8.inc`) on the Direct3D 9 layer (`d3d9.c`), DirectSound (`dsound.c`), DirectInput 8 (`dinput8.c`), Winsock (`winsock.c`, `net_ole.c`), SEH (`seh.c`), crash reports (`crash.c`), and `gr_imports.c` for the few calls only Ghost Recon makes |
+| `../src/renderer/` | the Metal renderer the Direct3D layer drives (`renderer.m`, `shaders.metal`) |
+| `host/` | the Mac app: window, input, sound output, test scripting (`main.m`), and the launch window (`gr_launcher.m`) |
+| `tests/` | instruction harnesses and runtime unit tests inherited from the earlier ports |
+| `third_party/` | MojoShader, minimp3, Vulkan headers (see [NOTICE.md](../NOTICE.md)) |
 
-Test mode: `DS_TEST=1` (background window, no mouse capture, no launch window), `W32_AUDIO_MUTE=1`,
-`DS_SCRIPT=...` or `DS_CMDFILE=<file>` (scripted input in the game's display-mode coordinates), `DS_RESOLUTION=WxH`.
-Logs: `W32_TRACE=<file>` (every Windows call), `W32_SEHLOG=1` (exceptions and the SEH chain), `W32_REGLOG=1`,
-`W32_AUDIOLOG=1`, `W32_DDLOG=1`, `W32_NETLOG=1`. The Delta Force switches (`DF_*`) are listed in
-[docs/DF-PORT.md](../docs/DF-PORT.md#tools-and-switches). Crash and hang reports go to `<data>/CrashReports`.
+## Testing and debugging
+
+`run_gr.sh ["<script>"]` runs the last build in **test mode**: a background window that never takes the mouse, sound
+muted, no launch window. It reads `GR_GAME` (game folder) and `GR_DATA` (data folder) and passes on everything else
+below.
+
+| Switch | Effect |
+|---|---|
+| `DS_TEST=1` | test mode (`run_gr.sh` sets it, with `DS_NO_LAUNCHER=1` and `W32_AUDIO_MUTE=1`) |
+| `GR_CAMPAIGN=gr\|ds\|it` | which campaign's mod set (`modsset.txt`) to start with |
+| `GTA_MODE=WxH` | the mission resolution, written into `options.xml` (the launch window's Resolution) |
+| `DS_SCRIPT="<frame>:<action>;…"` | input at given frames |
+| `DS_CMDFILE=<file>` | input appended to a file while the game runs (one action per line) |
+| `W32_AUDIO_MUTE=0` | sound on in test mode (for sound bugs) |
+| `DS_LOG_FILE=<file>` | the host's log to a file |
+
+Script actions (`host/main.m`): `dimove:x,y` (DirectInput mouse movement in mickeys; 1 mickey = 1 menu pixel),
+`click:x,y`, `rclick:x,y`, `dclick:x,y`, `key:vk`, `hold:vk,frames`, `type:text`, `shot:<png>` (the game's own
+picture, so screenshots work with the window hidden). The game draws its own cursor from DirectInput, so a reliable
+click is `dimove:-3000,-3000` (pin it to the corner), `dimove:x,y`, about a second's wait (buttons need hover), then
+`click:x,y`. Menu coordinates are listed in [docs/GR-PORT.md](../docs/GR-PORT.md#testing).
+
+Logs and test switches:
+
+| Switch | Shows or changes |
+|---|---|
+| `W32_TRACE=<file>` | every Windows call |
+| `W32_SEHLOG=1` | exceptions and the SEH chain each one walks |
+| `W32_REGLOG=1` | registry keys the game asks for that aren't there |
+| `W32_AUDIOLOG=1`, `W32_DSLOG=1` | the sound mix; DirectSound buffers, including each `SetVolume` |
+| `W32_DILOG=1` | DirectInput |
+| `W32_NETLOG=1` | sockets: create, bind (and the fallback to any address), connect, accept, traffic |
+| `W32_NETVIRT=k` | copy *k* of several on one Mac: its own loopback address 127.0.0.*k* and port range, so two copies can host and join each other |
+| `DSR_DRAWLOG=1` | each kind of draw once: FVF, texture stages (including the texture-coordinate index), lighting |
+| `D3D9_CREATELOG=1` | device creation, with the behaviour flags and the x87 control word afterwards |
+| `DSR_ANISO=n` | anisotropic filtering for mipmapped textures (default 16; 1 is off) |
+| `DSR_VSYNC=0` | no VSync |
+| `W32_NO_FPUSETUP=1` | Direct3D leaves the x87 precision alone (Windows lowers it; this brings back the old mipmap crash) |
+
+Crash and hang reports go to `<data>/CrashReports`. The app shows the newest one the next time it opens.
 
 ## Execution model
 
@@ -43,42 +89,29 @@ Logs: `W32_TRACE=<file>` (every Windows call), `W32_SEHLOG=1` (exceptions and th
 - **Functions:** one C function per original function. Registers are C locals, written back to a per-thread context
   around calls. The guest stack is real (`call` pushes the original return address; arguments are read where the
   original reads them), so calling conventions, `this` pointers and stack-walking code behave as before.
-- **Flags:** lazy — flag-setting instructions record their operands; consumers (`jcc`, `setcc`, `adc`, `sahf` …)
+- **Flags:** lazy. Flag-setting instructions record their operands, and consumers (`jcc`, `setcc`, `adc`, `sahf` …)
   compute only the flags they need.
-- **x87:** eight doubles + TOP + control/status words, the precision model Dungeon Siege II was measured to run with
-  under Rosetta: double arithmetic, float rounding at 32-bit stores, `fist(p)` honouring the rounding
-  mode. x87 register forms are decoded from the opcode bytes (Intel semantics), not from disassembler text.
-- **Indirect calls/jumps:** an address → function table; jump tables become `switch` statements; imports are dispatched
-  through `rt_import` (IAT slots hold thunk addresses, so a call through a register still lands there).
+- **x87:** eight doubles, TOP, and the control and status words.
+  - Arithmetic is done in double precision, with float rounding at 32-bit stores, and `fist(p)` honours the rounding
+    mode.
+  - When the precision control says single (which Direct3D's `CreateDevice` sets, as on Windows), add, subtract,
+    multiply, divide and square root results are rounded to 24 bits (`rt_pc` in `rt.h`). Ghost Recon's
+    power-of-two test depends on that.
+  - x87 register forms are decoded from the opcode bytes (Intel semantics), not from disassembler text.
+- **Indirect calls and jumps:** an address → function table. Jump tables become `switch` statements. Imports are
+  dispatched through `rt_import` (IAT slots hold thunk addresses, so a call through a register still lands there).
 - Junk decodes (data read as code) and padding become `rt_unhandled()` traps.
 
 ## Verification and known gaps
 
 The instruction-level harness (`tests/harness.py`, `tests/fuzz_insn.py`, `tests/test_slice.py`) comes from the
-Dungeon Siege 1 port, where every instruction form the game used was checked bit-for-bit against Unicorn.
-`tests/fuzz_sse.py` passes every MMX form both Delta Force games use (on arm64 too), and `tests/replay.py` runs one
-call through the original x86 and the recompiled code from a snapshot and compares them. The games themselves were
-checked against the originals under Proton: see [docs/DF-PORT.md](../docs/DF-PORT.md).
+Dungeon Siege 1 port, where every instruction form the game used was checked bit for bit against Unicorn.
+`tests/replay.py` runs one call through the original x86 and the recompiled code from a snapshot and compares them.
+The game itself is checked by playing it: [docs/GR-PORT.md](../docs/GR-PORT.md#state) lists what has been.
 
-- **SEH:** access violations and RaiseException go through the game's handlers. First touches of reserved archive
-  pages pass over C++ `catch(...)` frames (the game reads archives inside them); C++ catch continuations are not
+- **SEH:** access violations and `RaiseException` go through the game's handlers. C++ catch continuations are not
   implemented, and the game has not needed them so far.
 - **Indirect calls** to addresses outside the function table stop the game with the address logged (add it as a
-  seed in `work/observed_targets.json` and rebuild).
+  seed in `work/gr/observed_targets.json` and rebuild).
 - **x87 tag word** is not modelled; transcendentals use the host math library.
-
-## A note from the author
-
-These projects are roughly 90% built with AI, with human testing along the way. I started them because some of my
-favorite games either ran badly on macOS or wouldn’t run at all, and Wine and CrossOver didn’t always get me where I
-wanted.
-
-I’m a 40-year-old dad with a full-time job. I don’t have the time or desire to write all of this from scratch, and AI
-made it possible to get somewhere with it.
-
-If that puts you off, no hard feelings. Use them, skip them, fork them. It’s all good. I would have happily used an
-existing, human-written native port, but I couldn’t find one that did what I wanted. Mostly, I just want to play my
-games.
-
-The aim is straightforward native builds without unwanted extras or a stack of translation layers. Forks and
-improvements are welcome.
+- **Movies:** the AVIs (MS-MPEG-4 v2, Indeo 3.2) have no decoder yet, so DirectShow reports them finished at once.
