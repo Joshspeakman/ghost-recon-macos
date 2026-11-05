@@ -83,3 +83,4 @@ recomp/.venv
 *.hdr
 *.prj
 recomp/work-*.log
+.claude/
