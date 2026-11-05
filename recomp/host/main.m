@@ -777,6 +777,14 @@ static int bundle_launch(const char *argv0, const char **exe, const char **game,
 }
 #endif
 
+/* A signal that ends the process without a crash report (SIGPIPE, SIGTERM, SIGHUP...): one line in the log naming it,
+ * then the default action, so a game that just disappears says why. */
+static void on_fatal_signal(int sig)
+{
+    char m[96]; int n = snprintf(m, sizeof m, "DungeonSiegeNative: ended by signal %d (%s)\n", sig, sys_signame[sig]);
+    if (n > 0) write(2, m, (size_t)n);
+    signal(sig, SIG_DFL); raise(sig);
+}
 int main(int argc, char **argv)
 {
     if (getenv("DS_LOG_FILE")) setvbuf(stderr, NULL, _IOLBF, 0);   /* a launcher sent stderr to the log: keep lines on a kill */
@@ -822,6 +830,10 @@ int main(int argc, char **argv)
             }
         }
         w32_crash_init(data, DS_BUILD); w32_crash_thread("macOS UI thread");
+        signal(SIGPIPE, SIG_IGN);   /* Windows has no SIGPIPE: a write to a closed socket or pipe fails with an error (here
+                                     * EPIPE); unignored, the app launched from Finder ended silently at the router lookup */
+        { const int sigs[] = {SIGHUP, SIGINT, SIGQUIT, SIGALRM, SIGTERM, SIGXCPU, SIGXFSZ, SIGVTALRM, SIGPROF, SIGUSR1, SIGUSR2};
+          for (size_t k = 0; k < sizeof sigs / sizeof *sigs; k++) signal(sigs[k], on_fatal_signal); }
         { void w32_registry_install(const char *); w32_registry_install(data); }   /* values the game's installer would have written */
 #ifdef GR_EDITION
         gr_prepare(overlay);
