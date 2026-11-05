@@ -56,6 +56,12 @@ chosen mode.
   and per-stage texture-coordinate sets. Terrain is FVF `0x242` (two sets): stage 0 the map's colour layer on set 0,
   stage 1 the tiling detail on set 1 (`D3DTSS_TEXCOORDINDEX` 1); with only set 0 the detail was smeared over the whole
   map and the ground looked flat brown. `DSR_DRAWLOG=1` lists each kind of draw once.
+- Renderer: `D3DTSS_MIPMAPLODBIAS` (Ghost Recon sets -0.5) reaches the shader's sampling, and mipmapped, filtered
+  textures get 16x anisotropic filtering (`DSR_ANISO=n`; 1 is off). 60 fps, GPU about 1.3 ms at 1280x800.
+
+| Training before the renderer fixes | After: terrain detail layer, vertex lighting, anisotropic filtering |
+|---|---|
+| ![Training before the renderer fixes: flat, smeared ground](screenshots/training-before.jpg) | ![Training after: detailed ground and lit steps](screenshots/training.jpg) |
 
 ## Testing
 
@@ -67,16 +73,16 @@ mickeys; 1 mickey = 1 menu pixel), `click:x,y`, `dclick:x,y`, `key:vk`, `hold:vk
 Campaign 130,291; Quick Mission 130,314; Options 130,383; New Campaign 103,208; Start 333,442; next (>) 537,462;
 Auto Assign 122,89. Escape in Training ends it.
 
-## State (2026-11-04)
+## State (2026-11-05)
 
 | | |
 |---|---|
-| Ghost Recon | menus, Training (obstacle course: walk, look), campaign/quick mission screens |
-| Desert Siege | new campaign → D01 Burning Sands in game, firing works |
-| Island Thunder | new campaign → C01 intro flyover in game |
+| Ghost Recon | menus, Training (obstacle course: walk, look), platoon setup, quick mission Castle in game |
+| Desert Siege | new campaign → D01 Burning Sands in game, firing; save, quit to menu, quit the game, load (same place and ammo) |
+| Island Thunder | new campaign → C01 intro flyover and the start of the mission |
 | Sound | music, effects and briefing voice play (DirectSound, EAX not offered) |
 | Movies | **skipped**: MS-MPEG-4 v2 (MP42) and Indeo 3.2 (IV32) AVIs, no decoder in the runtime yet |
-| Multiplayer | LAN: host, join, lobby, a round on opposite teams (two copies on one Mac, `W32_NETVIRT=1`/`2`) |
+| Multiplayer | LAN: host, join, lobby, a round on opposite teams (two copies on one Mac, `W32_NETVIRT=1`/`2`). Not yet tried: two Macs (the game shows the router's public address as its own; whether it hands that to joiners is unknown), internet play |
 | Mipmapping option | works (on for new installs); the game's mip LOD bias is applied, plus 16x anisotropic filtering (`DSR_ANISO=1` off) |
 
 Known cosmetic leftovers: the guest install path is `C:\GOG Games\Dungeon Siege` (shows in `IkeCrash.log`), log
