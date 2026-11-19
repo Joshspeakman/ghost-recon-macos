@@ -57,6 +57,7 @@ static const char *dev_env(const char *name)   /* GR_LAUNCHER_<name>, or DS_LAUN
 }
 
 // ---------------------------------------------------------------- the campaigns
+static BOOL gr_dropin;   /* the downloaded app (setup/): its hints name no install.sh */
 typedef struct {
     const char *id, *title, *sub, *theatre, *mods, *depot;   /* sub: the expansion's name under GHOST RECON */
     CGFloat heroX, heroY; CGFloat r, g, b;                  /* where the hero's crop sits; a colour when there is no art */
@@ -328,8 +329,9 @@ static void reticle(NSPoint c, CGFloat rad, CGFloat w, NSColor *col)   /* the cr
 {
     GRCampaign *c = self.campaigns[i];
     if (!c.installed) {
-        if (i == 0) return @"Ghost Recon's files are missing: run ./install.sh again";
-        return [NSString stringWithFormat:@"%s isn't installed: download_depot %s in Steam's console, then ./install.sh", c.def->title, c.def->depot];
+        if (i == 0) return gr_dropin ? @"Ghost Recon's files are missing" : @"Ghost Recon's files are missing: run ./install.sh again";
+        return [NSString stringWithFormat:@"%s isn't installed: download_depot %s in Steam's console, then %@", c.def->title, c.def->depot,
+                gr_dropin ? [NSString stringWithFormat:@"copy its Mods/%s into the game's Mods", c.def->mods] : @"./install.sh"];
     }
     return [NSString stringWithFormat:@"%s · double-click or Return to play", c.def->title];
 }
@@ -369,7 +371,8 @@ static void reticle(NSPoint c, CGFloat rad, CGFloat w, NSColor *col)   /* the cr
     reticle(NSMakePoint(72, 252), 8, 1.5, accent());
     draw_text(@"NATIVE FOR APPLE SILICON", heavy(20), text_c(), NSMakeRect(94, 243, 420, 24), NSTextAlignmentLeft, sh, 4);
     NSString *tag = c.installed ? @"Metal · your Steam copy, recompiled · one program for all three campaigns"
-                                : (self.campaign == 0 ? @"Game files missing · run ./install.sh" : [NSString stringWithFormat:@"Not installed · download_depot %s, then ./install.sh", c.def->depot]);
+                                : (self.campaign == 0 ? (gr_dropin ? @"Game files missing" : @"Game files missing · run ./install.sh")
+                                   : [NSString stringWithFormat:@"Not installed · download_depot %s, then %@", c.def->depot, gr_dropin ? @"add its Mods folder" : @"./install.sh"]);
     draw_text(tag, body(12.5, NO), accent(), NSMakeRect(94, 266, 600, 20), NSTextAlignmentLeft, sh, 0.3);
     /* the campaigns */
     draw_text(@"CAMPAIGNS", heavy(15), dim(), NSMakeRect(60, 294, 300, 18), NSTextAlignmentLeft, nil, 4);
@@ -404,7 +407,9 @@ static NSString *update_check(NSString *updater)     /* the newest commit of the
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_global_queue(0, 0), ^{ if (t.running) [t terminate]; });
     NSData *d = [p.fileHandleForReading readDataToEndOfFile]; [t waitUntilExit];
     NSString *out = [[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    return t.terminationStatus == 0 && out.length >= 40 ? [out substringToIndex:40] : nil;
+    if (t.terminationStatus != 0 || !out.length) return nil;
+    if (out.length >= 40) return [out substringToIndex:40];   /* a commit (an app built from source) */
+    return [out rangeOfCharacterFromSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].location == NSNotFound ? out : nil;   /* a release's tag (the downloaded app) */
 }
 static NSArray<NSDictionary *> *update_choice(int state, NSString *branch, NSString *built, NSString *latest)
 {
@@ -419,6 +424,12 @@ static NSArray<NSDictionary *> *update_choice(int state, NSString *branch, NSStr
 }
 static NSString *update_phase(NSString *line, NSString *branch)
 {
+    if ([branch isEqualToString:@"release"]) {   /* the downloaded app's updater (setup/update.sh) */
+        if ([line hasPrefix:@"== downloading "]) return [NSString stringWithFormat:@"Downloading %@ from GitHub", [line substringFromIndex:15]];
+        if ([line hasPrefix:@"== unpacking"]) return @"Unpacking it";
+        if ([line hasPrefix:@"== installing"]) return @"Installing the new app";
+        return nil;
+    }
     if ([line hasPrefix:@"== fetching"]) return @"Downloading the update from GitHub";
     if ([line hasPrefix:[NSString stringWithFormat:@"== %@:", branch]]) return [@"Got " stringByAppendingString:[line substringFromIndex:branch.length + 4]];
     if ([line hasPrefix:@"== recompiling"]) return @"Rebuilding Ghost Recon from your copy: translating it to native code";
@@ -543,6 +554,7 @@ static NSAlert *alert(NSString *msg, NSString *info) { NSAlert *a = [NSAlert new
     self.updater = [NSFileManager.defaultManager isExecutableFileAtPath:upd] ? upd : nil;
     NSDictionary *info = NSBundle.mainBundle.infoDictionary;
     self.branch = getenv("DS_UPDATE_BRANCH") ? @(getenv("DS_UPDATE_BRANCH")) : cfg[@"branch"] ?: info[@"GRBranch"] ?: @"main";
+    gr_dropin = [self.branch isEqualToString:@"release"];   /* the downloaded app: no install.sh, the game lives in its own folder */
     self.built = getenv("DS_BUILT_COMMIT") ? @(getenv("DS_BUILT_COMMIT")) : cfg[@"built"] ?: info[@"GRBuilt"] ?: @"";
 }
 - (GRLaunchView *)makeView
@@ -609,7 +621,7 @@ static NSAlert *alert(NSString *msg, NSString *info) { NSAlert *a = [NSAlert new
     BOOL haveGame = [fm fileExistsAtPath:[game stringByAppendingPathComponent:@"GhostRecon.exe"]];
     GRTile *saves = [GRTile new]; saves.title = @"Saves";
     saves.current = ^NSDictionary * {
-        if (!haveGame) return @{@"label": @"—", @"off": @YES, @"note": @"Ghost Recon's files are missing: run ./install.sh again"};
+        if (!haveGame) return @{@"label": @"—", @"off": @YES, @"note": gr_dropin ? @"Ghost Recon's files are missing" : @"Ghost Recon's files are missing: run ./install.sh again"};
         return @{@"label": @"Open", @"note": [@"Saved games: " stringByAppendingString:saveDir().stringByAbbreviatingWithTildeInPath]};
     };
     saves.activate = ^{
@@ -620,7 +632,7 @@ static NSAlert *alert(NSString *msg, NSString *info) { NSAlert *a = [NSAlert new
     };
     GRTile *files = [GRTile new]; files.title = @"Game Files";
     files.current = ^NSDictionary * {
-        if (!haveGame) return @{@"label": @"—", @"off": @YES, @"note": @"Ghost Recon's files are missing: run ./install.sh again"};
+        if (!haveGame) return @{@"label": @"—", @"off": @YES, @"note": gr_dropin ? @"Ghost Recon's files are missing" : @"Ghost Recon's files are missing: run ./install.sh again"};
         return @{@"label": @"Open", @"note": [@"The game's own folder (Data, Mods, Docs): " stringByAppendingString:game.stringByAbbreviatingWithTildeInPath]};
     };
     files.activate = ^{
@@ -691,7 +703,10 @@ static NSAlert *alert(NSString *msg, NSString *info) { NSAlert *a = [NSAlert new
         if (state == UPD_CHECKING || state == UPD_NONE) return;
         if (state != UPD_AVAILABLE) { check(); return; }
         NSAlert *a = alert([NSString stringWithFormat:@"Update to the newest %@?", [branch isEqualToString:@"nightly"] ? @"Nightly" : @"version"],
-                           [NSString stringWithFormat:@"The %@ branch (%@) is downloaded from GitHub and Ghost Recon is rebuilt from your own copy, "
+                           [branch isEqualToString:@"release"]   /* the downloaded app (setup/update.sh) */
+                           ? [NSString stringWithFormat:@"%@ is downloaded from GitHub and replaces this app. Your game, saves and settings are kept; "
+                              "if the game's code changed, it is rebuilt from your copy when the app starts again.", latest]
+                           : [NSString stringWithFormat:@"The %@ branch (%@) is downloaded from GitHub and Ghost Recon is rebuilt from your own copy, "
                             "which takes around fifteen minutes. Your saves and settings are kept. The app restarts when it is done.", branch, short_commit(latest)]);
         [a addButtonWithTitle:@"Update"]; [a addButtonWithTitle:@"Cancel"];
         if ([a runModal] != NSAlertFirstButtonReturn) return;
@@ -721,7 +736,12 @@ static NSAlert *alert(NSString *msg, NSString *info) { NSAlert *a = [NSAlert new
 {
     GRCampaign *c = self.view.chosen;
     if (!c.installed) {
-        if (self.view.campaign == 0) [alert(@"Ghost Recon's files are missing", [NSString stringWithFormat:@"Expected GhostRecon.exe and Mods/Origmiss in %@. Run ./install.sh again.", self.game]) runModal];
+        BOOL dropin = gr_dropin;
+        if (self.view.campaign == 0) [alert(@"Ghost Recon's files are missing", [NSString stringWithFormat:@"Expected GhostRecon.exe and Mods/Origmiss in %@.%@", self.game,
+                                            dropin ? @"" : @" Run ./install.sh again."]) runModal];
+        else if (dropin) [alert([NSString stringWithFormat:@"%s isn't installed", c.def->title],
+                    [NSString stringWithFormat:@"Download it in Steam's console (steam://open/console):\n\ndownload_depot %s\n\nthen copy the Mods/%s folder from that download "
+                     "(or from a PC's Ghost Recon folder) into:\n\n%@/Mods", c.def->depot, c.def->mods, self.game]) runModal];
         else [alert([NSString stringWithFormat:@"%s isn't installed", c.def->title],
                     [NSString stringWithFormat:@"Download it in Steam's console (steam://open/console):\n\ndownload_depot %s\n\nthen run the project's ./install.sh again: "
                      "it adds the expansion's Mods/%s to the game folder.", c.def->depot, c.def->mods]) runModal];
