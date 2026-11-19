@@ -1,0 +1,98 @@
+{
+  "name": "Ghost Recon",
+  "folder": "Ghost Recon",
+  "bundle_id": "io.github.joshspeakman.ghost-recon",
+  "release_repo": "Joshspeakman/ghost-recon-macos",
+  "binary": "Ghost Recon",
+  "icon_label": "GR",
+  "version": "1.4 (Steam)",
+  "where": "Your Ghost Recon folder from Steam's Windows version (app 15300). Desert Siege and Island Thunder come along when they're in its Mods folder, or downloaded beside it with Steam's console (download_depot 13620 13621, 13630 13631)",
+  "minutes": 5,
+  "space_gb": 3,
+  "build_gb": 1,
+  "exe": "GhostRecon.exe",
+  "exe_sha256": {
+    "41ffcc70a97a3146386c71e5d1145dd5c939a1a974a247ce47ba3ffb88e16c15": {
+      "version": "1.4 (Steam)",
+      "patch": [
+        [
+          "steamstub20.py",
+          "{exe}",
+          "{exe}"
+        ]
+      ]
+    }
+  },
+  "required": [
+    "Data",
+    "Mods/Origmiss"
+  ],
+  "libs": [],
+  "tag_lowercase": false,
+  "lift_args": [
+    "--game",
+    "gr"
+  ],
+  "cc_args": [
+    "-fPIC",
+    "-DRT_HOST_RC_INIT=UINT32_MAX"
+  ],
+  "art": [
+    [
+      "gr_art.py",
+      "gr",
+      "{art}/gr"
+    ],
+    [
+      "gr_art.py",
+      "ds",
+      "{art}/ds"
+    ],
+    [
+      "gr_art.py",
+      "it",
+      "{art}/it"
+    ]
+  ],
+  "log": "GhostRecon",
+  "local_network": "Ghost Recon hosts and joins multiplayer games on your local network.",
+  "build": "./build_gr.sh \"$GAME\"",
+  "out": "work/gr",
+  "rt_opt": "-O1",
+  "rt_cflags": [
+    "-DGR_EDITION"
+  ],
+  "host_cflags": [
+    "-DGR_EDITION"
+  ],
+  "frameworks": [
+    "AppKit",
+    "GameController",
+    "Metal",
+    "QuartzCore",
+    "CoreText",
+    "CoreGraphics",
+    "CoreFoundation",
+    "AudioToolbox",
+    "CoreImage"
+  ],
+  "style": "tactical",
+  "title": "GHOST RECON",
+  "art_url": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/15300/header.jpg",
+  "addons": [
+    {
+      "name": "Desert Siege",
+      "into": "Mods/Mp1",
+      "look": [
+        "../../app_13620/depot_13621/Mods/Mp1"
+      ]
+    },
+    {
+      "name": "Island Thunder",
+      "into": "Mods/Mp2",
+      "look": [
+        "../../app_13630/depot_13631/Mods/Mp2"
+      ]
+    }
+  ]
+}
