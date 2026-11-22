@@ -90,7 +90,7 @@ def main():
             hint = self.label('F12 releases the mouse · F11 toggles fullscreen',54,595,672,20)
             hint.setAlignment(Qt.AlignmentFlag.AlignCenter); hint.setFont(QFont('DejaVu Serif',9))
             repo = QPushButton('PROJECT',self); self.place(repo,54,642,140,50)
-            repo.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://github.com/Joshspeakman/dungeon-siege-2-linux')))
+            repo.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://github.com/Joshspeakman/ghost-recon-macos')))
             lab = QPushButton('TEST LAB',self); self.place(lab,208,642,160,50); lab.clicked.connect(self.open_lab)
             self.lab = None
             quit = QPushButton('QUIT',self); self.place(quit,382,642,140,50); quit.clicked.connect(self.close)
