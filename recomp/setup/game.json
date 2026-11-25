@@ -41,17 +41,23 @@
     [
       "gr_art.py",
       "gr",
-      "{art}/gr"
+      "{art}/gr",
+      "--game",
+      "{game}"
     ],
     [
       "gr_art.py",
       "ds",
-      "{art}/ds"
+      "{art}/ds",
+      "--game",
+      "{game}"
     ],
     [
       "gr_art.py",
       "it",
-      "{art}/it"
+      "{art}/it",
+      "--game",
+      "{game}"
     ]
   ],
   "log": "GhostRecon",

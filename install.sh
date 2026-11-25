@@ -101,7 +101,7 @@ APPS="${APPS:-$HOME/Applications}"; mkdir -p "$APPS"; APPS="$(cd "$APPS" && pwd)
 U_BUILT="$(git -C "$HERE" rev-parse HEAD 2>/dev/null || true)"
 echo "== installing $A"
 STAGE="$HERE/build/stage/$NAME.app"; rm -rf "$STAGE"; mkdir -p "$STAGE/Contents/MacOS" "$STAGE/Contents/Resources"
-clang -O2 -fobjc-arc -Wall -DGR_LAUNCHER_APP -framework Cocoa -o "$STAGE/Contents/MacOS/GhostReconLauncher" "$HERE/recomp/host/gr_launcher.m"
+clang -O2 -fobjc-arc -Wall -DGR_LAUNCHER_APP -framework Cocoa -framework GameController -framework QuartzCore -o "$STAGE/Contents/MacOS/GhostReconLauncher" "$HERE/recomp/host/gr_launcher.m"
 cp "$OUT/app/GhostRecon" "$STAGE/Contents/MacOS/"
 for f in shaders.metal dsr_snapshot.bin; do cp "$OUT/app/$f" "$STAGE/Contents/MacOS/"; done
 cp "$OUT/GhostRecon.exe" "$STAGE/Contents/Resources/"          # the unwrapped executable: your copy, this Mac only
@@ -112,8 +112,8 @@ plutil -insert exe -string GhostRecon.exe "$P"; plutil -insert bin -string Ghost
 plutil -insert branch -string "$U_BRANCH" "$P"; plutil -insert built -string "$U_BUILT" "$P"
 # the launch window's art (tools/gr_art.py) for all three campaigns, installed or not (a card shows it either way)
 for g in gr ds it; do
-  if python3 -I "$HERE/recomp/tools/gr_art.py" $g "$DATA/art/$g" $NODL >/dev/null 2>&1 && ls "$DATA/art/$g/"*.jpg >/dev/null 2>&1; then
-    mkdir -p "$STAGE/Contents/Resources/art/$g"; cp "$DATA/art/$g/hero.jpg" "$DATA/art/$g/shot1.jpg" "$STAGE/Contents/Resources/art/$g/" 2>/dev/null || true
+  if python3 -I "$HERE/recomp/tools/gr_art.py" $g "$DATA/art/$g" --game "$GAME" $NODL >/dev/null 2>&1 && ls "$DATA/art/$g/"*.jpg "$DATA/art/$g/"*.png >/dev/null 2>&1; then
+    mkdir -p "$STAGE/Contents/Resources/art/$g"; cp "$DATA/art/$g/hero.jpg" "$DATA/art/$g/shot1.jpg" "$DATA/art/$g/logo.png" "$STAGE/Contents/Resources/art/$g/" 2>/dev/null || true
   else echo "   (no art for the $g card: the launch window draws plain colours)"; fi
 done
 # the icon: the game's own Ghost.ico, else the executable's

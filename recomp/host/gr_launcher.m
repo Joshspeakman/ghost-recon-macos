@@ -30,7 +30,10 @@
  *   GR_LAUNCHER_DATA_DIR=<dir>  the data folder (launcher.plist, art/)
  *   GR_LAUNCHER_PLAY=1          press Play at once; GR_LAUNCHER_DRY=1 prints what Play would run instead of running it */
 #import <Cocoa/Cocoa.h>
+#import <GameController/GameController.h>
+#import <QuartzCore/QuartzCore.h>
 #include <errno.h>
+#include <math.h>
 #include <fcntl.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -71,7 +74,7 @@ enum { NCAMP = 3 };
 
 @interface GRCampaign : NSObject
 @property const CampaignDef *def; @property BOOL installed;
-@property NSImage *hero, *card;
+@property NSImage *hero, *card, *portrait; @property NSArray<NSImage *> *scenes;   /* scenes: the backdrop's slides */
 @end
 @implementation GRCampaign @end
 
@@ -93,7 +96,8 @@ enum { W = 960, H = 660 };
 @property NSArray<GRCampaign *> *campaigns; @property NSInteger campaign;
 @property NSArray<GRTile *> *tiles; @property NSInteger hover, pressed, focus;   /* focus: -1 the cards, else a tile */
 @property NSArray<GRTile *> *rows; @property BOOL open; @property NSInteger rowFocus;   /* the Graphics Options panel */
-@property NSString *hint;
+@property NSString *hint; @property NSImage *logo;
+@property double t, switchT; @property NSInteger prevCampaign; @property NSMutableDictionary *cache;   /* the animation's clock; pictures drawn once */
 @property (copy) void (^onPlay)(void); @property (copy) void (^onQuit)(void); @property (copy) void (^onChange)(void);
 @end
 
@@ -118,7 +122,7 @@ enum { W = 960, H = 660 };
 - (NSRect)rowValue:(NSInteger)k { NSRect r = [self rowRect:k]; return NSMakeRect(NSMaxX(r) - 300, r.origin.y + 4, 262, 28); }
 - (void)openPanel { self.open = YES; self.rowFocus = 0; self.hover = HIT_NONE; self.needsDisplay = YES; }
 - (void)closePanel { self.open = NO; self.hover = HIT_NONE; self.needsDisplay = YES; }
-- (void)choose:(NSInteger)c { if (c == self.campaign) return; self.campaign = c; self.needsDisplay = YES; if (self.onChange) self.onChange(); }
+- (void)choose:(NSInteger)c { if (c == self.campaign) return; self.prevCampaign = self.campaign; self.switchT = self.t; self.campaign = c; self.needsDisplay = YES; if (self.onChange) self.onChange(); }
 - (NSInteger)hit:(NSPoint)p
 {
     if (NSPointInRect(p, self.playRect)) return HIT_PLAY;
@@ -345,25 +349,181 @@ static void reticle(NSPoint c, CGFloat rad, CGFloat w, NSColor *col)   /* the cr
     if (!self.chosen.installed && (self.hover == HIT_PLAY || self.hover == HIT_NONE)) return [self cardHint:self.campaign];
     return self.hint;
 }
+/* ---- the moving part: the chosen campaign's pictures drifting and crossfading behind the window, dust drifting, far
+ * guns flashing and tracers crossing the sky, the portrait in a gun-sight's frame with a scan sweeping down it; the still
+ * part (titles, cards, tiles, buttons) drawn once into a picture and again only when what it shows changes ---- */
+static double hash01(double x) { double s = sin(x * 12.9898) * 43758.5453; return s - floor(s); }
+static NSImage *offscreen(NSSize size, CGFloat scale, void (^draw)(void))
+{
+    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:(NSInteger)ceil(size.width * scale) pixelsHigh:(NSInteger)ceil(size.height * scale)
+                                                                 bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+    rep = [rep bitmapImageRepByRetaggingWithColorSpace:NSColorSpace.sRGBColorSpace] ?: rep;   /* (as the window's: no conversion per frame) */
+    rep.size = size;
+    CGContextRef cg = [NSGraphicsContext graphicsContextWithBitmapImageRep:rep].CGContext;
+    [NSGraphicsContext saveGraphicsState];
+    CGContextTranslateCTM(cg, 0, size.height); CGContextScaleCTM(cg, 1, -1);
+    [NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithCGContext:cg flipped:YES]];
+    draw();
+    [NSGraphicsContext restoreGraphicsState];
+    NSImage *img = [[NSImage alloc] initWithSize:size]; [img addRepresentation:rep];
+    return img;
+}
+static NSImage *ready(NSImage *img, CGFloat maxw)   /* decoded once, at most maxw pixels wide (its pixels, not its points) */
+{
+    if (!img || img.size.width < 16) return nil;
+    NSSize s = img.size; NSInteger pw = 0, ph = 0;
+    for (NSImageRep *r in img.representations) if (r.pixelsWide > pw) { pw = r.pixelsWide; ph = r.pixelsHigh; }
+    if (pw > 0 && ph > 0) s = NSMakeSize(pw, ph);
+    CGFloat k = MIN(1.0, maxw / s.width); NSSize o = NSMakeSize(round(s.width * k), round(s.height * k));
+    return offscreen(o, 1, ^{ [img drawInRect:NSMakeRect(0, 0, o.width, o.height) fromRect:NSZeroRect operation:NSCompositingOperationCopy fraction:1 respectFlipped:YES hints:@{NSImageHintInterpolation: @(NSImageInterpolationHigh)}]; });
+}
+static void draw_fill_z(NSImage *img, NSRect r, CGFloat alpha, CGFloat z, CGFloat fx, CGFloat fy, NSImageInterpolation q)
+{
+    if (!img) return; NSSize s = img.size; if (s.width <= 0 || s.height <= 0) return;
+    CGFloat k = MAX(r.size.width / s.width, r.size.height / s.height) * z, w = r.size.width / k, h = r.size.height / k;
+    [img drawInRect:r fromRect:NSMakeRect((s.width - w) * fx, (s.height - h) * (1 - fy), w, h) operation:NSCompositingOperationSourceOver fraction:alpha respectFlipped:YES hints:@{NSImageHintInterpolation: @(q)}];
+}
+- (CGFloat)scale { return self.window ? self.window.backingScaleFactor : 2; }
+- (NSRect)portraitRect { return NSMakeRect(W - 60 - 236, 30, 236, 252); }
+- (NSImage *)sprite:(NSString *)key colors:(NSArray<NSColor *> *)cols
+{
+    NSImage *c = self.cache[key]; if (c) return c;
+    c = offscreen(NSMakeSize(128, 128), 1, ^{ [[[NSGradient alloc] initWithColors:cols] drawFromCenter:NSMakePoint(64, 64) radius:0 toCenter:NSMakePoint(64, 64) radius:64 options:0]; });
+    self.cache[key] = c; return c;
+}
+static void draw_sprite(NSImage *img, NSPoint c, CGFloat rx, CGFloat ry, CGFloat alpha)
+{
+    if (alpha <= 0.002) return;
+    [img drawInRect:NSMakeRect(c.x - rx, c.y - ry, 2 * rx, 2 * ry) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:MIN(1, alpha) respectFlipped:YES hints:@{NSImageHintInterpolation: @(NSImageInterpolationLow)}];
+}
+/* a campaign's slides, each drifting from when it starts fading in until it has faded out; tt: its own clock */
+- (void)backdrop:(GRCampaign *)c alpha:(CGFloat)alpha clock:(double)tt
+{
+    NSArray<NSImage *> *sc = c.scenes; NSUInteger n = sc.count; NSRect b = self.bounds; if (!n) return; if (tt < 0) tt = 0;
+    double per = 8.0, fadeT = 1.6;
+    void (^slide)(NSUInteger, double, CGFloat) = ^(NSUInteger j, double local, CGFloat a) {
+        double p = local / (per + fadeT); CGFloat dir = (j % 2) ? 1 : -1;
+        draw_fill_z(sc[j % n], b, a * alpha, (CGFloat)(1.04 + 0.07 * p), (CGFloat)(0.5 + dir * 0.10 * (p - 0.5)), (CGFloat)(0.45 + 0.05 * (p - 0.5)), NSImageInterpolationMedium);
+    };
+    if (n == 1) { draw_fill_z(sc[0], b, alpha, (CGFloat)(1.08 + 0.035 * sin(tt * 0.11)), (CGFloat)(0.5 + 0.06 * sin(tt * 0.07)), 0.45, NSImageInterpolationMedium); return; }
+    NSUInteger k = (NSUInteger)(tt / per); double local = tt - (double)k * per;
+    if (local < fadeT && k > 0) { slide(k - 1, local + per, 1); slide(k, local, (CGFloat)(local / fadeT)); }
+    else slide(k, local, 1);
+}
+- (NSImage *)gradeImage   /* drawn once: the field's olive cast, dark on the left for the title and below for the cards */
+{
+    NSImage *c = self.cache[@"grade"]; if (c) return c;
+    NSRect b = self.bounds;
+    c = offscreen(b.size, 1, ^{
+        [[accent_dim() colorWithAlphaComponent:0.16] setFill]; NSRectFillUsingOperation(b, NSCompositingOperationSourceOver);
+        NSGradient *left = [[NSGradient alloc] initWithColorsAndLocations:[ink() colorWithAlphaComponent:0.82], 0.0, [ink() colorWithAlphaComponent:0.45], 0.42, [ink() colorWithAlphaComponent:0.10], 0.76, [ink() colorWithAlphaComponent:0.05], 1.0, nil];
+        [left drawInRect:b angle:0];
+        NSGradient *foot = [[NSGradient alloc] initWithColorsAndLocations:[ink() colorWithAlphaComponent:0.15], 0.0, [ink() colorWithAlphaComponent:0], 0.30, [ink() colorWithAlphaComponent:0.55], 0.55, [ink() colorWithAlphaComponent:0.88], 0.75, [ink() colorWithAlphaComponent:0.96], 1.0, nil];
+        [foot drawInRect:b angle:-90];
+    });
+    self.cache[@"grade"] = c; return c;
+}
+- (NSString *)signature
+{
+    NSMutableString *s = [NSMutableString stringWithFormat:@"%ld|%ld|%ld|%ld|%d|%ld|%@|%.0f", (long)self.campaign, (long)self.hover, (long)self.pressed, (long)self.focus, self.open, (long)self.rowFocus, self.currentHint ?: @"", self.scale];
+    for (GRTile *t in self.tiles) [s appendFormat:@"|%@", t.summary ? t.summary() : (t.current ? t.current() : t.choices[t.index])[@"label"]];
+    for (GRTile *t in self.rows) [s appendFormat:@"|%ld", (long)t.index];
+    for (GRCampaign *c in self.campaigns) [s appendFormat:@"|%d", c.installed];
+    return s;
+}
+static int frames_drawn;   /* (GR_LAUNCHER_TIMING: frames a second, in the window) */
 - (void)drawRect:(NSRect)dirty
 {
-    NSRect b = self.bounds; GRCampaign *c = self.chosen;
-    NSShadow *sh = [NSShadow new]; sh.shadowColor = [NSColor colorWithWhite:0 alpha:0.85]; sh.shadowOffset = NSMakeSize(0, -1); sh.shadowBlurRadius = 3;
+    NSRect b = self.bounds; double T = self.t; frames_drawn++;
+    if (!self.cache) self.cache = [NSMutableDictionary dictionary];
+    if (![self.cache[@"scale"] isEqual:@(self.scale)]) { [self.cache removeAllObjects]; self.cache[@"scale"] = @(self.scale); }
     [ink() setFill]; NSRectFill(b);
-    /* the chosen campaign's screenshot across the top, graded olive; it fades into the dark below and behind the title */
-    NSRect band = NSMakeRect(0, 0, W, 360);
-    if (c.hero) { draw_cover(c.hero, band, 1, c.def->heroX, c.def->heroY); grade(band, 0.35, 0.28); }
-    else { [rgb(c.def->r, c.def->g, c.def->b) setFill]; NSRectFill(band); }
-    if (!c.installed) { [[NSColor colorWithWhite:0.5 alpha:1] setFill]; NSRectFillUsingOperation(band, NSCompositingOperationSaturation);
-                        [[ink() colorWithAlphaComponent:0.35] setFill]; fill_over(band); }
-    NSGradient *left = [[NSGradient alloc] initWithColorsAndLocations:[ink() colorWithAlphaComponent:0.94], 0.0, [ink() colorWithAlphaComponent:0.6], 0.4, [ink() colorWithAlphaComponent:0], 0.72, nil];
-    [left drawInRect:band angle:0];
-    NSGradient *foot = [[NSGradient alloc] initWithColorsAndLocations:[ink() colorWithAlphaComponent:0], 0.0, [ink() colorWithAlphaComponent:0.7], 0.6, ink(), 1.0, nil];
-    [foot drawInRect:NSMakeRect(0, 150, W, 212) angle:90];
-    /* the title, as on the box: TOM CLANCY'S over GHOST RECON, the expansion's name under it */
+    double fade = MIN(1.0, (T - self.switchT) / 0.6); BOOL fading = fade < 1 && self.prevCampaign != self.campaign;
+    if (fading) [self backdrop:self.campaigns[self.prevCampaign] alpha:1 clock:T];
+    [self backdrop:self.chosen alpha:fading ? (CGFloat)fade : 1 clock:T];
+    if (!self.chosen.installed) { [[NSColor colorWithWhite:0.5 alpha:1] setFill]; NSRectFillUsingOperation(b, NSCompositingOperationSaturation); }
+    [self.gradeImage drawInRect:b fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:@{NSImageHintInterpolation: @(NSImageInterpolationLow)}];
+    /* smoke rolling across; far guns flashing along the horizon; tracers; dust */
+    NSImage *mist = [self sprite:@"mist" colors:@[rgb(0.28, 0.30, 0.24), [rgb(0.22, 0.24, 0.19) colorWithAlphaComponent:0.45], [ink() colorWithAlphaComponent:0]]];
+    for (int i = 0; i < 6; i++) {
+        double sp = 0.5 + hash01(i * 3.1), y = H * (0.30 + 0.55 * hash01(i * 7.7)), r = 150 + 160 * hash01(i * 1.3);
+        double x = fmod(hash01(i * 5.9) * (W + 2 * r) + T * 7 * sp, W + 2 * r) - r;
+        draw_sprite(mist, NSMakePoint(x, y + 10 * sin(T * 0.2 + i)), r, r * 0.55, 0.13 + 0.05 * sin(T * 0.3 + i));
+    }
+    NSImage *flash = [self sprite:@"flash" colors:@[[NSColor colorWithSRGBRed:1 green:0.75 blue:0.4 alpha:1], [NSColor colorWithSRGBRed:0.95 green:0.4 blue:0.1 alpha:0.4], [ink() colorWithAlphaComponent:0]]];
+    for (int i = 0; i < 3; i++) {
+        double period = 4.8 + 1.9 * i, ph = fmod(T + i * 1.7, period), k = floor((T + i * 1.7) / period); if (ph > 0.8) continue;
+        double a = ph < 0.06 ? ph / 0.06 : pow(1 - (ph - 0.06) / 0.74, 2);
+        draw_sprite(flash, NSMakePoint(W * (0.10 + 0.80 * hash01(k * 3.7 + i)), H * (0.36 + 0.10 * hash01(k * 1.9 + i))), 100 + 50 * hash01(k + i), 60, 0.30 * a);
+    }
+    for (int i = 0; i < 2; i++) {
+        double period = 3.4 + 1.5 * i, ph = fmod(T + i * 1.3, period) / 0.5, k = floor((T + i * 1.3) / period); if (ph > 1) continue;
+        double y0 = H * (0.12 + 0.30 * hash01(k * 5.1 + i)), dir = hash01(k * 2.3 + i) > 0.5 ? 1 : -1, x = (dir > 0 ? -40 : W + 40) + dir * ph * (W + 80), y = y0 - ph * 50 * hash01(k + 7);
+        NSBezierPath *p = [NSBezierPath bezierPath]; [p moveToPoint:NSMakePoint(x, y)]; [p lineToPoint:NSMakePoint(x - dir * 44, y + 7 * hash01(k + 7))];
+        p.lineWidth = 1.5; p.lineCapStyle = NSLineCapStyleRound; [[NSColor colorWithSRGBRed:1 green:0.86 blue:0.55 alpha:0.6 * (1 - ph * 0.5)] setStroke]; [p stroke];
+    }
+    for (int i = 0; i < 80; i++) {
+        double sx = hash01(i * 1.618), sy = hash01(i * 2.414 + 7), sp = 0.35 + hash01(i * 0.577 + 3);
+        double x = fmod(sx * (W + 60) - T * 18 * sp, W + 60); if (x < 0) x += W + 60; x -= 30;
+        double y = fmod(sy * (H + 20) + T * 4 * sp + 6 * sin(T * 0.8 * sp + i), H + 20) - 10;
+        [[accent_hi() colorWithAlphaComponent:0.08 + 0.16 * fabs(sin(T * 0.6 * sp + i))] setFill]; CGFloat r = (CGFloat)(0.5 + 0.9 * sp);
+        NSRectFillUsingOperation(NSMakeRect(x - r, y - r * 0.7, r * 2.2, r * 1.4), NSCompositingOperationSourceOver);
+    }
+    /* the portrait (its frame is in the still part): the chosen campaign's soldier, a scan sweeping down the sight */
+    {
+        NSRect in = NSInsetRect(self.portraitRect, 9, 9);
+        [NSGraphicsContext saveGraphicsState]; NSRectClip(in); [ink() setFill]; NSRectFill(in);
+        if (fading && self.campaigns[self.prevCampaign].portrait) draw_fill_z(self.campaigns[self.prevCampaign].portrait, in, 1, 1.02, 0.5, 0.35, NSImageInterpolationHigh);
+        GRCampaign *c = self.chosen;
+        if (c.portrait) draw_fill_z(c.portrait, in, fading ? (CGFloat)fade : 1, (CGFloat)(1.02 + 0.02 * sin(T * 0.21)), (CGFloat)(0.5 + 0.02 * sin(T * 0.13)), 0.35, NSImageInterpolationHigh);
+        if (!c.installed) { [[NSColor colorWithWhite:0.5 alpha:1] setFill]; NSRectFillUsingOperation(in, NSCompositingOperationSaturation); }
+        double ph = fmod(T * 0.22, 1.0); CGFloat y = in.origin.y + ph * in.size.height;
+        [[[NSGradient alloc] initWithColors:@[[accent() colorWithAlphaComponent:0], [accent() colorWithAlphaComponent:0.16], [accent() colorWithAlphaComponent:0]]] drawInRect:NSMakeRect(in.origin.x, y - 28, in.size.width, 56) angle:90];
+        [[NSColor colorWithWhite:0 alpha:0.10] setFill]; for (CGFloat ly = in.origin.y; ly < NSMaxY(in); ly += 3) NSRectFillUsingOperation(NSMakeRect(in.origin.x, ly, in.size.width, 1), NSCompositingOperationSourceOver);
+        NSGradient *foot = [[NSGradient alloc] initWithColorsAndLocations:[ink() colorWithAlphaComponent:0], 0.6, [ink() colorWithAlphaComponent:0.9], 1.0, nil]; [foot drawInRect:in angle:90];
+        [NSGraphicsContext restoreGraphicsState];
+    }
+    NSString *sig = self.signature;
+    if (!self.cache[@"ui"] || ![self.cache[@"uiSig"] isEqual:sig]) { self.cache[@"ui"] = offscreen(b.size, self.scale, ^{ [self drawStill]; }); self.cache[@"uiSig"] = sig; }
+    [(NSImage *)self.cache[@"ui"] drawInRect:b fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+    if (self.chosen.installed && !self.open) {                         /* Play: its sight brackets breathing */
+        CGFloat a = 0.35 + 0.35 * (0.5 + 0.5 * sin(T * 2.2)), d = 4 + 2 * sin(T * 2.2);
+        corners(NSInsetRect(self.playRect, -d, -d), 9, 1.5, [accent_hi() colorWithAlphaComponent:a]);
+    }
+}
+- (void)drawStill
+{
+    NSRect b = self.bounds; GRCampaign *c = self.chosen; (void)b;
+    NSShadow *sh = [NSShadow new]; sh.shadowColor = [NSColor colorWithWhite:0 alpha:0.85]; sh.shadowOffset = NSMakeSize(0, -1); sh.shadowBlurRadius = 3;
+    /* the portrait's frame: a gun-sight's, gunmetal, range ticks down its sides, brackets at its corners; its window clear */
+    {
+        NSRect pr = self.portraitRect, in = NSInsetRect(pr, 9, 9);
+        NSShadow *ps = [NSShadow new]; ps.shadowColor = [NSColor colorWithWhite:0 alpha:0.85]; ps.shadowBlurRadius = 16; ps.shadowOffset = NSMakeSize(0, -5);
+        [NSGraphicsContext saveGraphicsState]; [ps set]; [panel_c() setFill]; NSRectFill(pr); [NSGraphicsContext restoreGraphicsState];
+        [[[NSGradient alloc] initWithStartingColor:rgb(0.16, 0.17, 0.13) endingColor:rgb(0.06, 0.07, 0.05)] drawInRect:pr angle:-70];
+        stroke_rect(pr, [accent() colorWithAlphaComponent:0.45], 1);
+        [[accent() colorWithAlphaComponent:0.5] setFill];
+        for (CGFloat ty = pr.origin.y + 20; ty < NSMaxY(pr) - 16; ty += 10) { CGFloat len = fmod(ty - pr.origin.y, 40) < 10 ? 5 : 3;
+            NSRectFill(NSMakeRect(pr.origin.x + 2, ty, len, 1)); NSRectFill(NSMakeRect(NSMaxX(pr) - 2 - len, ty, len, 1)); }
+        NSRectFillUsingOperation(in, NSCompositingOperationClear);
+        stroke_rect(NSInsetRect(in, -1, -1), [NSColor colorWithWhite:0 alpha:0.9], 1);
+        corners(NSInsetRect(in, 6, 6), 16, 1.5, accent());
+        reticle(NSMakePoint(NSMidX(in), NSMidY(in) - 24), 9, 1, [accent() colorWithAlphaComponent:0.35]);
+        draw_text(@(c.def->theatre), heavy(15), text_c(), NSMakeRect(in.origin.x, NSMaxY(in) - 26, in.size.width, 18), NSTextAlignmentCenter, sh, 4);
+    }
+    /* the title: the game's own (keyed out of its main menu), else as on the box: TOM CLANCY'S over GHOST RECON; the
+     * expansion's name under it */
     NSShadow *ts = [NSShadow new]; ts.shadowColor = [NSColor colorWithWhite:0 alpha:0.8]; ts.shadowOffset = NSMakeSize(0, -2); ts.shadowBlurRadius = 10;
-    draw_text(@"TOM CLANCY’S", heavy(19), [text_c() colorWithAlphaComponent:0.82], NSMakeRect(62, 52, 400, 22), NSTextAlignmentLeft, ts, 6);
-    draw_text(@"GHOST RECON", heavy(88), text_c(), NSMakeRect(58, 72, 600, 92), NSTextAlignmentLeft, ts, 3);
+    if (self.logo) {
+        NSSize ls = self.logo.size; CGFloat lw = 520, lh = lw * ls.height / MAX(1, ls.width);
+        NSShadow *ls2 = [NSShadow new]; ls2.shadowColor = [NSColor colorWithWhite:0 alpha:0.95]; ls2.shadowOffset = NSMakeSize(0, -2); ls2.shadowBlurRadius = 6;
+        [NSGraphicsContext saveGraphicsState]; [ls2 set];
+        [self.logo drawInRect:NSMakeRect(54, 158 - lh, lw, lh) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:@{NSImageHintInterpolation: @(NSImageInterpolationHigh)}];
+        [NSGraphicsContext restoreGraphicsState];
+    } else {
+        draw_text(@"TOM CLANCY’S", heavy(19), [text_c() colorWithAlphaComponent:0.82], NSMakeRect(62, 52, 400, 22), NSTextAlignmentLeft, ts, 6);
+        draw_text(@"GHOST RECON", heavy(88), text_c(), NSMakeRect(58, 72, 600, 92), NSTextAlignmentLeft, ts, 3);
+    }
     if (c.def->sub) {
         [accent() setFill]; NSRectFill(NSMakeRect(62, 170, 26, 2));
         draw_text(@(c.def->sub), heavy(30), accent(), NSMakeRect(98, 158, 500, 34), NSTextAlignmentLeft, ts, 9);
@@ -376,7 +536,7 @@ static void reticle(NSPoint c, CGFloat rad, CGFloat w, NSColor *col)   /* the cr
     draw_text(tag, body(12.5, NO), accent(), NSMakeRect(94, 266, 600, 20), NSTextAlignmentLeft, sh, 0.3);
     /* the campaigns */
     draw_text(@"CAMPAIGNS", heavy(15), dim(), NSMakeRect(60, 294, 300, 18), NSTextAlignmentLeft, nil, 4);
-    draw_text([NSString stringWithFormat:@"%@  ·  %@", @(c.def->title).uppercaseString, @(c.def->theatre)], heavy(15), accent(), NSMakeRect(W - 60 - 500, 294, 500, 18), NSTextAlignmentRight, nil, 4);
+    draw_text(@(c.def->title).uppercaseString, heavy(15), accent(), NSMakeRect(W - 60 - 500, 294, 500, 18), NSTextAlignmentRight, nil, 4);
     NSInteger hov = self.hover, foc = self.focus; if (self.open) self.hover = self.focus = HIT_NONE;   /* under the panel: nothing lit */
     for (NSInteger i = 0; i < NCAMP; i++) [self drawCard:i shadow:sh];
     for (NSInteger k = 0; k < (NSInteger)self.tiles.count; k++) [self drawTile:k shadow:sh];
@@ -529,7 +689,7 @@ static NSAlert *alert(NSString *msg, NSString *info) { NSAlert *a = [NSAlert new
 
 // ---------------------------------------------------------------- the launcher
 @interface GRLauncher : NSObject <NSApplicationDelegate>
-@property (strong) NSWindow *window; @property (strong) GRLaunchView *view;
+@property (strong) NSWindow *window; @property (strong) GRLaunchView *view; @property (strong) NSTimer *timer;
 @property (strong) GRTile *display, *notch, *resolution, *vsync, *updates;
 @property NSString *game, *data, *plistPath, *binPath, *exePath, *updater, *branch, *built;
 @property BOOL embedded, ready;   /* embedded: inside the game (ds_launcher_run); ready: the game binary is there to run */
@@ -570,9 +730,21 @@ static NSAlert *alert(NSString *msg, NSString *info) { NSAlert *a = [NSAlert new
         NSArray *art = @[[res stringByAppendingPathComponent:[@"art" stringByAppendingPathComponent:@(d->id)]],
                          [self.data stringByAppendingPathComponent:[@"art" stringByAppendingPathComponent:@(d->id)]]];
         c.hero = image_at(art, @"hero.jpg"); c.card = image_at(art, @"shot1.jpg");
+        /* the slides: the menu's own pictures (Ghost Recon), the intro's frames and the store's screenshots, in turn */
+        NSMutableArray *own = [NSMutableArray array], *store = [NSMutableArray array];
+        for (int k = 1; k <= 8; k++) { NSImage *im = ready(image_at(art, [NSString stringWithFormat:@"scene-%d.png", k]), 1400); if (im) [own addObject:im];
+                                       im = ready(image_at(art, [NSString stringWithFormat:@"intro-%d.jpg", k]), 1400); if (im) [own addObject:im]; }
+        for (int k = 2; k <= 8; k++) { NSImage *im = ready(image_at(art, [NSString stringWithFormat:@"shot-%d.jpg", k]), 1600); if (im) [store addObject:im]; }
+        if (c.hero) [store insertObject:ready(c.hero, 1600) atIndex:0];
+        NSMutableArray *sc = [NSMutableArray array];
+        for (NSUInteger k = 0; k < MAX(own.count, store.count); k++) { if (k < store.count) [sc addObject:store[k]]; if (k < own.count) [sc addObject:own[k]]; }
+        c.scenes = sc;
+        NSImage *por = image_at(art, @"portrait.png") ?: image_at(art, @"intro-3.jpg") ?: image_at(art, @"intro-2.jpg") ?: c.hero;
+        c.portrait = ready(por, 1000);
         [camps addObject:c];
     }
     GRLaunchView *v = [[GRLaunchView alloc] initWithFrame:NSMakeRect(0, 0, W, H)]; self.view = v;
+    v.logo = image_at(@[[res stringByAppendingPathComponent:@"art/gr"], [self.data stringByAppendingPathComponent:@"art/gr"]], @"logo.png");   /* the game's own title */
     v.hover = v.pressed = HIT_NONE; v.focus = -1; v.campaigns = camps;
     NSInteger s = campaign_index(saved[@"campaign"]); v.campaign = s >= 0 && camps[s].installed ? s : 0;
     v.hint = @"←/→ choose a campaign · ↑/↓ settings · Return plays · Esc quits";
@@ -654,7 +826,16 @@ static NSAlert *alert(NSString *msg, NSString *info) { NSAlert *a = [NSAlert new
     if (dev_env("HOVER")) v.hover = atoi(dev_env("HOVER"));
     if (dev_env("FOCUS")) v.focus = atoi(dev_env("FOCUS"));
     if (dev_env("OPEN")) v.open = YES;
-    NSBitmapImageRep *rep = [v bitmapImageRepForCachingDisplayInRect:v.bounds]; [v cacheDisplayInRect:v.bounds toBitmapImageRep:rep];
+    v.t = dev_env("TIME") ? atof(dev_env("TIME")) : 4.0; v.switchT = -10; v.prevCampaign = v.campaign;   /* (the animation's clock, seconds) */
+    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:(NSInteger)v.bounds.size.width * 2 pixelsHigh:(NSInteger)v.bounds.size.height * 2
+                                                                bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+    rep.size = v.bounds.size;
+    [v displayRectIgnoringOpacity:v.bounds inContext:[NSGraphicsContext graphicsContextWithBitmapImageRep:rep]];
+    if (dev_env("TIMING")) {                                             /* what a frame costs, once warm */
+        double t0 = CACurrentMediaTime();
+        for (int k = 0; k < 60; k++) { v.t += 1.0 / 60; [v displayRectIgnoringOpacity:v.bounds inContext:[NSGraphicsContext graphicsContextWithBitmapImageRep:rep]]; }
+        fprintf(stderr, "frame: %.1f ms\n", (CACurrentMediaTime() - t0) * 1000 / 60);
+    }
     [[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:@(shot) atomically:YES];
     return YES;
 }
@@ -665,6 +846,32 @@ static NSAlert *alert(NSString *msg, NSString *info) { NSAlert *a = [NSAlert new
     w.releasedWhenClosed = NO; w.titlebarAppearsTransparent = YES; w.titleVisibility = NSWindowTitleHidden; w.movableByWindowBackground = YES;
     w.title = @"Ghost Recon"; w.backgroundColor = ink(); w.contentView = self.view;
     self.window = w; [w center]; [w makeFirstResponder:self.view];
+    /* the animation, 60 times a second (in a modal loop's mode too); a controller: the d-pad or the left stick (left and
+     * right the campaigns, up and down the settings; held: repeats), A chooses, B goes back or quits, Start plays */
+    GRLaunchView *v = self.view; v.switchT = -10; v.prevCampaign = v.campaign;
+    double t0 = CACurrentMediaTime(); __block int held = 0; __block double next = 0; __block uint32_t was = 0; __weak GRLaunchView *wv = v;
+    [GCController startWirelessControllerDiscoveryWithCompletionHandler:nil];
+    void (^key)(unsigned short) = ^(unsigned short code) {
+        NSEvent *e = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:wv.window.windowNumber context:nil
+                                    characters:@"" charactersIgnoringModifiers:@"" isARepeat:NO keyCode:code];
+        [wv keyDown:e];
+    };
+    self.timer = [NSTimer timerWithTimeInterval:1.0 / 60 repeats:YES block:^(NSTimer *tm) {
+        GRLaunchView *sv = wv; if (!sv) return;
+        double t = sv.t = CACurrentMediaTime() - t0;
+        GCExtendedGamepad *g = (GCController.current ?: GCController.controllers.firstObject).extendedGamepad;
+        if (g && NSApp.active && sv.window.isKeyWindow) {
+            float x = g.leftThumbstick.xAxis.value, y = g.leftThumbstick.yAxis.value;
+            int dir = g.dpad.left.pressed || x < -0.6f ? 0x7b : g.dpad.right.pressed || x > 0.6f ? 0x7c : g.dpad.up.pressed || y > 0.6f ? 0x7e : g.dpad.down.pressed || y < -0.6f ? 0x7d : 0;
+            if (dir != held) { held = dir; next = t + 0.38; if (dir) key((unsigned short)dir); }
+            else if (dir && t >= next) { next = t + 0.14; key((unsigned short)dir); }
+            uint32_t now = (g.buttonA.pressed ? 1u : 0) | (g.buttonB.pressed ? 2u : 0) | (g.buttonMenu.pressed ? 4u : 0), down = now & ~was; was = now;
+            if (down & 1) key(0x24); else if (down & 2) key(0x35); else if ((down & 4) && sv.onPlay) sv.onPlay();
+        } else { held = 0; was = 0; }
+        sv.needsDisplay = YES;
+        static double lastT; if (dev_env("TIMING") && t - lastT >= 1) { fprintf(stderr, "fps: %.0f\n", frames_drawn / (t - lastT)); frames_drawn = 0; lastT = t; }
+    }];
+    [[NSRunLoop currentRunLoop] addTimer:self.timer forMode:NSRunLoopCommonModes];
     return w;
 }
 - (void)applicationDidFinishLaunching:(NSNotification *)n
@@ -843,6 +1050,7 @@ int ds_launcher_run(const char *game_dir, const char *data_dir)
         [NSApp activateIgnoringOtherApps:YES];
         [w makeKeyAndOrderFront:nil];
         [NSApp runModalForWindow:w];
+        [l.timer invalidate];
         [[NSNotificationCenter defaultCenter] removeObserver:obs];
         [w orderOut:nil];
         if (!l.result) return 0;
