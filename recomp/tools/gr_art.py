@@ -15,6 +15,13 @@ With --game, from the player's own copy (nothing of it is kept in this project):
   scene-<n>.png  the main menu's pictures (shell_bgd-0n.rsb, Ghost Recon's card): the backdrop's slides
   portrait.png the soldier by the wall under the moon (shell_bgd-02.rsb): the framed portrait
   intro-<n>.jpg  frames of the campaign's intro movie (Data/Video or Mods/Mp1, Mp2: intro.avi), with ffmpeg
+From GOG's store page for Ghost Recon (product 1207658751; gr only):
+  cover.jpg    the box art (594x800): the framed portrait
+  keyart.jpg   the key art with the logo (1600x740)
+  logo-hd.png  the logo (Tom Clancy's GHOST RECON and its crosshair) cut out of the key art: about 700 px wide,
+               sharp at Retina sizes. The letters are neutral metal on green camouflage: neutral and bright pixels,
+               gaps closed and holes filled, kept where they form the letters, grown by the bevel's width, with the
+               crosshair's green lines
 --no-downloads (or no network): nothing is fetched. Standard library only (and ffmpeg for the intro, when installed).
 """
 import json, os, shutil, struct, subprocess, sys, tempfile, urllib.request, zlib
@@ -25,6 +32,9 @@ GAMES = {   # app id, the hero screenshot, the card's screenshot
     'it': (13630, '0000003920', '0000003927'),     # the jungle ridge; a village in the fog
 }
 ASSET = 'https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/%d/%s'
+GOG_COVER = 'https://images.gog-statics.com/3c6ff5b86bd1f3b1a43dd7b16183a8121dc74bdc63c4c6cf721ef6c99ea52fbc.jpg'
+GOG_KEYART = 'https://images.gog-statics.com/4f0ce624e272b3ef7aeeac53cfd210fd59cc56b1f41f6ee49a636c2caf4e3b30.png'
+GOG_API = 'https://api.gog.com/v2/games/1207658751?locale=en-US'
 JPG = b'\xff\xd8'
 
 def fetch(url):
@@ -110,6 +120,111 @@ def from_copy(gid, game, out):
             if os.path.exists(p + '.part.jpg') and os.path.getsize(p + '.part.jpg') > 12000: os.replace(p + '.part.jpg', p)
             elif os.path.exists(p + '.part.jpg'): os.remove(p + '.part.jpg')
 
+def read_png(path):
+    """an 8-bit RGB or RGBA PNG (no interlace): width, height, rows of (r, g, b)"""
+    d = open(path, 'rb').read(); i = 8; idat = b''; w = h = ct = 0
+    while i < len(d):
+        n, t = struct.unpack('>I4s', d[i:i + 8]); c = d[i + 8:i + 8 + n]; i += 12 + n
+        if t == b'IHDR': w, h, bd, ct, _, _, il = struct.unpack('>IIBBBBB', c); assert bd == 8 and ct in (2, 6) and not il
+        elif t == b'IDAT': idat += c
+    bpp = 3 if ct == 2 else 4; raw = zlib.decompress(idat); stride = w * bpp; rows = []; prev = bytearray(stride); o = 0
+    for _ in range(h):
+        f = raw[o]; line = bytearray(raw[o + 1:o + 1 + stride]); o += 1 + stride
+        for x in range(stride):
+            a = line[x - bpp] if x >= bpp else 0; b = prev[x]; c = prev[x - bpp] if x >= bpp else 0
+            if f == 1: line[x] = (line[x] + a) & 255
+            elif f == 2: line[x] = (line[x] + b) & 255
+            elif f == 3: line[x] = (line[x] + (a + b) // 2) & 255
+            elif f == 4:
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                line[x] = (line[x] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        rows.append([tuple(line[k:k + 3]) for k in range(0, stride, bpp)]); prev = line
+    return w, h, rows
+
+def _grow(m, w, h, r):   # dilate a 0/1 list-of-lists by r (square), separably
+    out = [[0] * w for _ in range(h)]
+    for y in range(h):
+        row = m[y]; acc = [0] * (w + 1)
+        for x in range(w): acc[x + 1] = acc[x] + row[x]
+        out[y] = [1 if acc[min(w, x + r + 1)] - acc[max(0, x - r)] else 0 for x in range(w)]
+    res = [[0] * w for _ in range(h)]
+    for x in range(w):
+        acc = [0] * (h + 1)
+        for y in range(h): acc[y + 1] = acc[y] + out[y][x]
+        for y in range(h): res[y][x] = 1 if acc[min(h, y + r + 1)] - acc[max(0, y - r)] else 0
+    return res
+
+def _shrink(m, w, h, r):
+    inv = [[1 - v for v in row] for row in m]
+    g = _grow(inv, w, h, r); return [[1 - v for v in row] for row in g]
+
+def _components(m, w, h):
+    lab = [[0] * w for _ in range(h)]; sizes = [0]; n = 0
+    for y in range(h):
+        for x in range(w):
+            if m[y][x] and not lab[y][x]:
+                n += 1; stack = [(y, x)]; lab[y][x] = n; c = 0
+                while stack:
+                    cy, cx = stack.pop(); c += 1
+                    for ny, nx in ((cy - 1, cx), (cy + 1, cx), (cy, cx - 1), (cy, cx + 1)):
+                        if 0 <= ny < h and 0 <= nx < w and m[ny][nx] and not lab[ny][nx]: lab[ny][nx] = n; stack.append((ny, nx))
+                sizes.append(c)
+    return lab, sizes
+
+def key_logo(keyart, out):
+    """the logo out of GOG's key art (see the module's notes): written as an RGBA PNG"""
+    W, H, px = read_png(keyart)
+    if (W, H) != (1600, 740): return False                       # (another picture: the crop below is this one's)
+    x0, y0, x1, y1 = 460, 160, 1160, 520; w, h = x1 - x0, y1 - y0
+    rgb = [row[x0:x1] for row in px[y0:y1]]
+    m = [[1 if (max(p) > 107 and (max(p) - min(p)) < 0.16 * max(p)) else 0 for p in row] for row in rgb]
+    for _ in range(2): m = _shrink(_grow(m, w, h, 2), w, h, 2)  # close the metal's scratches
+    outside = [[0] * w for _ in range(h)]; stack = [(y, x) for y in (0, h - 1) for x in range(w) if not m[y][x]] + [(y, x) for x in (0, w - 1) for y in range(h) if not m[y][x]]
+    for y, x in stack: outside[y][x] = 1
+    while stack:                                                 # holes: what the outside can't reach
+        cy, cx = stack.pop()
+        for ny, nx in ((cy - 1, cx), (cy + 1, cx), (cy, cx - 1), (cy, cx + 1)):
+            if 0 <= ny < h and 0 <= nx < w and not m[ny][nx] and not outside[ny][nx]: outside[ny][nx] = 1; stack.append((ny, nx))
+    m = [[1 if m[y][x] or not outside[y][x] else 0 for x in range(w)] for y in range(h)]
+    lab, sizes = _components(m, w, h)
+    letters = [[1 if sizes[lab[y][x]] > 1500 else 0 for x in range(w)] for y in range(h)]
+    near = _grow(letters, w, h, 14); far = _grow(letters, w, h, 60)
+    keep = [[1 if letters[y][x] or (lab[y][x] and 60 < sizes[lab[y][x]] <= 1500 and near[y][x]) else 0 for x in range(w)] for y in range(h)]
+    green = [[1 if far[y][x] and rgb[y][x][1] > rgb[y][x][0] + 20 and rgb[y][x][1] > rgb[y][x][2] + 20 else 0 for x in range(w)] for y in range(h)]
+    gl, gs = _components(green, w, h)
+    bevel = _grow(keep, w, h, 4)
+    a = [[255 if bevel[y][x] or (gl[y][x] and gs[gl[y][x]] > 40) else 0 for x in range(w)] for y in range(h)]
+    soft = [[sum(a[yy][xx] for yy in (y - 1, y, y + 1) for xx in (x - 1, x, x + 1) if 0 <= yy < h and 0 <= xx < w) // 9 for x in range(w)] for y in range(h)]
+    on = [(x, y) for y in range(h) for x in range(w) if soft[y][x] > 5]
+    bx0, by0, bx1, by1 = min(p[0] for p in on), min(p[1] for p in on), max(p[0] for p in on) + 1, max(p[1] for p in on) + 1
+    rows = []
+    for y in range(by0, by1):
+        row = []
+        for x in range(bx0, bx1):
+            lx, ly = x - bx0, y - by0; al = soft[y][x]
+            if (lx > 500 and ly < 78) or (lx > 660 and ly < 112): al = 0   # (the camouflage beside TOM CLANCY'S and the T)
+            row.append(rgb[y][x] + (al,))
+        rows.append(row)
+    write_png(out, rows, alpha=True); return True
+
+def gog_art(out):
+    """GOG's box art and key art for Ghost Recon; the API's links if the known ones have gone"""
+    have = lambda n: os.path.exists(os.path.join(out, n))
+    cover, keyart = GOG_COVER, GOG_KEYART
+    if not have('cover.jpg') and not download(cover, os.path.join(out, 'cover.jpg')):
+        try: links = json.loads(fetch(GOG_API)).get('_links', {}); download(links['boxArtImage']['href'], os.path.join(out, 'cover.jpg'))
+        except Exception as e: print('  GOG: %s' % e, file=sys.stderr)
+    if not have('keyart.png'):
+        try:
+            d = fetch(keyart)
+            if d.startswith(b'\x89PNG'):
+                with open(os.path.join(out, 'keyart.png.part'), 'wb') as f: f.write(d)
+                os.replace(os.path.join(out, 'keyart.png.part'), os.path.join(out, 'keyart.png'))
+        except Exception as e: print('  GOG key art: %s' % e, file=sys.stderr)
+    if have('keyart.png') and not have('logo-hd.png'):
+        try: key_logo(os.path.join(out, 'keyart.png'), os.path.join(out, 'logo-hd.png'))
+        except Exception as e: print('  logo: %s' % e, file=sys.stderr)
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     game = sys.argv[sys.argv.index('--game') + 1] if '--game' in sys.argv[1:-1] else None
@@ -120,6 +235,7 @@ def main():
     if '--no-downloads' in sys.argv[1:]: return 0
     have = lambda n: os.path.exists(os.path.join(out, n))
     if not have('header.jpg'): download(ASSET % (app, 'header.jpg'), os.path.join(out, 'header.jpg'))
+    if args[0] == 'gr': gog_art(out)
     spare = None
     for n, name, size in (('hero.jpg', hero, '1920x1080'), ('shot1.jpg', card, '600x338')):
         p = os.path.join(out, n)

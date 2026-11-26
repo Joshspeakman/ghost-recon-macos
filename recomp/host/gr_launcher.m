@@ -48,6 +48,8 @@ static NSColor *text_c(void) { return rgb(0.92, 0.93, 0.88); }
 static NSColor *dim(void) { return rgb(0.58, 0.61, 0.54); }
 static NSColor *ink(void) { return rgb(0.043, 0.051, 0.040); }        /* green-black */
 static NSColor *panel_c(void) { return rgb(0.075, 0.085, 0.068); }
+static NSColor *ready_c(void) { return rgb(0.58, 0.82, 0.42); }        /* the green of a ready unit */
+static NSColor *signal_c(void) { return rgb(0.42, 0.86, 0.48); }       /* the crosshair's green, from the logo */
 static NSFont *heavy(CGFloat size) { return [NSFont fontWithName:@"DINCondensed-Bold" size:size] ?: [NSFont systemFontOfSize:size weight:NSFontWeightBold]; }
 static NSFont *body(CGFloat size, BOOL bold)
 { return [NSFont fontWithName:bold ? @"AvenirNext-DemiBold" : @"AvenirNext-Medium" size:size] ?: [NSFont systemFontOfSize:size weight:bold ? NSFontWeightSemibold : NSFontWeightRegular]; }
@@ -64,17 +66,22 @@ static BOOL gr_dropin;   /* the downloaded app (setup/): its hints name no insta
 typedef struct {
     const char *id, *title, *sub, *theatre, *mods, *depot;   /* sub: the expansion's name under GHOST RECON */
     CGFloat heroX, heroY; CGFloat r, g, b;                  /* where the hero's crop sits; a colour when there is no art */
+    const char *year, *blurb, *op;                         /* the credit line; the campaign in a sentence; the caption */
 } CampaignDef;
 static const CampaignDef CAMPAIGNS[3] = {
-    {"gr", "Ghost Recon", NULL, "RUSSIA · 2008", "Origmiss", "15300 15301", 0.75, 0.45, 0.22, 0.26, 0.17},
-    {"ds", "Desert Siege", "DESERT SIEGE", "ETHIOPIA · 2009", "Mp1", "13620 13621", 0.72, 0.45, 0.40, 0.34, 0.21},
-    {"it", "Island Thunder", "ISLAND THUNDER", "CUBA · 2010", "Mp2", "13630 13631", 0.80, 0.40, 0.12, 0.25, 0.18},
+    {"gr", "Ghost Recon", NULL, "RUSSIA · 2008", "Origmiss", "15300 15301", 0.75, 0.45, 0.22, 0.26, 0.17, "2001",
+     "2008. Ultranationalists take Moscow and roll into Georgia and the Baltics. Six Green Berets go in first, unseen.", "THE GHOSTS · 1ST BATTALION, 5TH SFG"},
+    {"ds", "Desert Siege", "DESERT SIEGE", "ETHIOPIA · 2009", "Mp1", "13620 13621", 0.72, 0.45, 0.40, 0.34, 0.21, "2002",
+     "2009. Ethiopia's army pours across the border into Eritrea. The Ghosts deploy to the Horn of Africa to break it.", "OPERATION · HORN OF AFRICA"},
+    {"it", "Island Thunder", "ISLAND THUNDER", "CUBA · 2010", "Mp2", "13630 13631", 0.80, 0.40, 0.12, 0.25, 0.18, "2002",
+     "2010. Cuba's first free election draws a guerrilla army out of the hills. The Ghosts land to keep the vote alive.", "OPERATION · ISLAND THUNDER"},
 };
 enum { NCAMP = 3 };
 
 @interface GRCampaign : NSObject
 @property const CampaignDef *def; @property BOOL installed;
 @property NSImage *hero, *card, *portrait; @property NSArray<NSImage *> *scenes;   /* scenes: the backdrop's slides */
+@property CGFloat coverZ, coverFx, coverFy;                                        /* the portrait's crop */
 @end
 @implementation GRCampaign @end
 
@@ -90,7 +97,7 @@ enum { NCAMP = 3 };
 
 // ---------------------------------------------------------------- the view
 enum { HIT_NONE = -1, HIT_PLAY = 100, HIT_QUIT = 101, HIT_BACK = 102, HIT_CARD = 200, HIT_TILE = 300, HIT_ROW = 400 };   /* tiles, rows: + 10*k + 0 left / 1 value / 2 right */
-enum { W = 960, H = 660 };
+enum { W = 960, H = 700 };
 
 @interface GRLaunchView : NSView
 @property NSArray<GRCampaign *> *campaigns; @property NSInteger campaign;
@@ -106,16 +113,16 @@ enum { W = 960, H = 660 };
 - (BOOL)acceptsFirstResponder { return YES; }
 - (BOOL)acceptsFirstMouse:(NSEvent *)e { return YES; }
 - (GRCampaign *)chosen { return self.campaigns[self.campaign]; }
-- (NSRect)cardRect:(NSInteger)i { return NSMakeRect(60 + i * 288, 318, 264, 149); }
+- (NSRect)cardRect:(NSInteger)i { CGFloat gap = 14, w = (532 - 2 * gap) / 3; return NSMakeRect(48 + i * (w + gap), 318, w, 160); }
 - (NSRect)tileRect:(NSInteger)k   /* the tiles in a row (a wide one counts twice) */
 {
     NSInteger units = 0, at = 0, n = (NSInteger)self.tiles.count;
     for (NSInteger j = 0; j < n; j++) { if (j == k) at = units; units += self.tiles[j].wide ? 2 : 1; }
-    CGFloat u = (840 - 16 * (units - 1)) / (CGFloat)units;
-    return NSMakeRect(60 + at * (u + 16), 494, self.tiles[k].wide ? 2 * u + 16 : u, 66);
+    CGFloat u = (864 - 16 * (units - 1)) / (CGFloat)units;
+    return NSMakeRect(48 + at * (u + 16), 522, self.tiles[k].wide ? 2 * u + 16 : u, 70);
 }
-- (NSRect)playRect { return NSMakeRect(W - 60 - 200, H - 66, 200, 46); }
-- (NSRect)quitRect { return NSMakeRect(W - 60 - 200 - 16 - 150, H - 66, 150, 46); }
+- (NSRect)playRect { return NSMakeRect(W - 48 - 230, H - 70, 230, 52); }
+- (NSRect)quitRect { return NSMakeRect(W - 48 - 230 - 16 - 150, H - 70, 150, 52); }
 - (NSRect)panelRect { CGFloat h = 86 + 60 * (CGFloat)self.rows.count; return NSMakeRect(130, MAX(40, 486 - h), 700, h); }
 - (NSRect)rowRect:(NSInteger)k { NSRect p = self.panelRect; return NSMakeRect(p.origin.x + 30, p.origin.y + 72 + 60 * k, p.size.width - 60, 52); }
 - (NSRect)rowArrow:(NSInteger)k right:(BOOL)right { NSRect r = [self rowRect:k]; return NSMakeRect(right ? NSMaxX(r) - 34 : NSMaxX(r) - 330, r.origin.y + 3, 30, 30); }
@@ -241,21 +248,50 @@ static void reticle(NSPoint c, CGFloat rad, CGFloat w, NSColor *col)   /* the cr
     [p moveToPoint:NSMakePoint(c.x, c.y + in)]; [p lineToPoint:NSMakePoint(c.x, c.y + out)];
     p.lineWidth = w; [col setStroke]; [p stroke];
 }
+/* a field plate: olive-black, a khaki hairline and an inner one, a sight's brackets at the corners; lit: khaki warmth */
+static void plate(NSRect r, CGFloat lit, NSColor *edge)
+{
+    NSGradient *g = [[NSGradient alloc] initWithColorsAndLocations:[rgb(0.085, 0.095, 0.072) colorWithAlphaComponent:0.90], 0.0, [rgb(0.035, 0.042, 0.032) colorWithAlphaComponent:0.94], 1.0, nil];
+    [g drawInRect:r angle:-90];
+    if (lit > 0) [[[NSGradient alloc] initWithColorsAndLocations:[accent() colorWithAlphaComponent:0.20 * lit], 0.0, [accent_dim() colorWithAlphaComponent:0.05 * lit], 1.0, nil] drawInRect:r angle:-90];
+    [[NSColor colorWithWhite:1 alpha:0.05] setFill]; NSRectFillUsingOperation(NSMakeRect(r.origin.x + 1, r.origin.y + 1, r.size.width - 2, 1), NSCompositingOperationSourceOver);
+    stroke_rect(r, edge ?: [accent() colorWithAlphaComponent:0.34], edge ? 1.5 : 1);
+    stroke_rect(NSInsetRect(r, 3, 3), [accent() colorWithAlphaComponent:0.10], 1);
+    corners(NSInsetRect(r, 3, 3), 7, 1.5, edge ?: [accent() colorWithAlphaComponent:0.7]);
+}
+/* a khaki rule fading out at both ends, a small crosshair in its middle */
+static void rule_x(CGFloat x0, CGFloat x1, CGFloat y, CGFloat alpha)
+{
+    CGFloat m = (x0 + x1) / 2;
+    [[[NSGradient alloc] initWithColors:@[[accent() colorWithAlphaComponent:0], [accent() colorWithAlphaComponent:alpha]]] drawInRect:NSMakeRect(x0, y - 0.5, m - 14 - x0, 1) angle:0];
+    [[[NSGradient alloc] initWithColors:@[[accent() colorWithAlphaComponent:alpha], [accent() colorWithAlphaComponent:0]]] drawInRect:NSMakeRect(m + 14, y - 0.5, x1 - m - 14, 1) angle:0];
+    reticle(NSMakePoint(m, y), 6, 1.2, [accent() colorWithAlphaComponent:alpha]);
+}
 - (void)drawButton:(NSRect)r title:(NSString *)title code:(NSInteger)code primary:(BOOL)primary enabled:(BOOL)enabled
 {
     BOOL hot = self.hover == code && enabled, down = self.pressed == code && enabled;
-    if (primary && !enabled) {   /* Play for a campaign that isn't installed: the bar, unlit */
-        [[accent_dim() colorWithAlphaComponent:0.5] setFill]; fill_over(r);
-        draw_text(title, heavy(26), [ink() colorWithAlphaComponent:0.7], NSMakeRect(r.origin.x, r.origin.y + 12, r.size.width, 30), NSTextAlignmentCenter, nil, 5);
-    } else if (primary) {        /* khaki, solid, dark lettering */
-        [(down ? accent_dim() : hot ? accent_hi() : accent()) setFill]; NSRectFill(r);
-        if (hot) corners(NSInsetRect(r, -5, -5), 9, 1.5, accent_hi());
-        draw_text(title, heavy(26), ink(), NSMakeRect(r.origin.x, r.origin.y + 12, r.size.width, 30), NSTextAlignmentCenter, nil, 5);
+    if (primary) {                 /* khaki, brushed, a crosshair before the word; dim when the campaign isn't installed */
+        [NSGraphicsContext saveGraphicsState];
+        if (enabled) { NSShadow *gl = [NSShadow new]; gl.shadowColor = [accent_hi() colorWithAlphaComponent:hot ? 0.55 : 0.30]; gl.shadowBlurRadius = 16; [gl set]; }
+        NSGradient *pg = [[NSGradient alloc] initWithColorsAndLocations:
+                          enabled ? (down ? accent_dim() : hot ? accent_hi() : rgb(0.80, 0.81, 0.60)) : rgb(0.22, 0.24, 0.17), 0.0,
+                          enabled ? rgb(0.62, 0.63, 0.43) : rgb(0.16, 0.17, 0.12), 0.65,
+                          enabled ? rgb(0.46, 0.48, 0.30) : rgb(0.12, 0.13, 0.09), 1.0, nil];
+        [pg drawInRect:r angle:-90];
+        [NSGraphicsContext restoreGraphicsState];
+        [[NSColor colorWithWhite:1 alpha:enabled ? 0.28 : 0.06] setFill]; fill_over(NSMakeRect(r.origin.x + 2, r.origin.y + 2, r.size.width - 4, 1));
+        [[NSColor colorWithWhite:0 alpha:0.18] setFill];                  /* (brushed metal) */
+        for (CGFloat x = r.origin.x + 3; x < NSMaxX(r) - 3; x += 3) fill_over(NSMakeRect(x, r.origin.y + 4, 1, r.size.height - 8));
+        stroke_rect(r, enabled ? ink() : [ink() colorWithAlphaComponent:0.6], 1.5);
+        stroke_rect(NSInsetRect(r, 4, 4), [ink() colorWithAlphaComponent:enabled ? 0.35 : 0.2], 1);
+        NSColor *tc = enabled ? ink() : [text_c() colorWithAlphaComponent:0.35];
+        NSAttributedString *a = [[NSAttributedString alloc] initWithString:title attributes:@{NSFontAttributeName: heavy(30), NSKernAttributeName: @6}];
+        CGFloat tw = a.size.width - 6, gx = NSMidX(r) - (tw + 34) / 2;
+        reticle(NSMakePoint(gx + 11, NSMidY(r) - 1), 10, 2, tc);
+        draw_text(title, heavy(30), tc, NSMakeRect(gx + 34, NSMidY(r) - 13, tw + 12, 32), NSTextAlignmentLeft, nil, 6);
     } else {
-        [[NSColor colorWithWhite:0 alpha:down ? 0.9 : 0.5] setFill]; fill_over(r);
-        stroke_rect(r, hot ? accent() : [text_c() colorWithAlphaComponent:0.28], 1);
-        if (hot) corners(NSInsetRect(r, -5, -5), 9, 1.5, accent());
-        draw_text(title, heavy(22), hot ? accent() : text_c(), NSMakeRect(r.origin.x, r.origin.y + 14, r.size.width, 26), NSTextAlignmentCenter, nil, 5);
+        plate(r, down ? 0.9 : hot ? 0.6 : 0, hot ? accent() : nil);
+        draw_text(title, heavy(22), hot ? accent_hi() : text_c(), NSMakeRect(r.origin.x, NSMidY(r) - 11, r.size.width, 26), NSTextAlignmentCenter, nil, 5);
     }
 }
 - (void)drawArrow:(NSRect)r right:(BOOL)right lit:(BOOL)lit
@@ -270,38 +306,45 @@ static void reticle(NSPoint c, CGFloat rad, CGFloat w, NSColor *col)   /* the cr
 {
     GRCampaign *c = self.campaigns[i]; NSRect r = [self cardRect:i];
     BOOL sel = self.campaign == i, hot = self.hover == HIT_CARD + i, foc = sel && self.focus == -1;
-    [ink() setFill]; NSRectFill(r);
-    if (c.card) { draw_cover(c.card, r, 1, 0.5, 0.5); grade(r, 0.3, 0.22); }
-    else { [rgb(c.def->r, c.def->g, c.def->b) setFill]; NSRectFill(r); }
-    if (!c.installed) { [[NSColor colorWithWhite:0.5 alpha:1] setFill]; NSRectFillUsingOperation(r, NSCompositingOperationSaturation); }   /* not installed: no colour */
-    NSGradient *foot = [[NSGradient alloc] initWithColorsAndLocations:[ink() colorWithAlphaComponent:0], 0.0, [ink() colorWithAlphaComponent:0.5], 0.45, [ink() colorWithAlphaComponent:0.94], 1.0, nil];
-    [foot drawInRect:NSMakeRect(r.origin.x, NSMidY(r) - 20, r.size.width, r.size.height / 2 + 20) angle:90];
-    NSGradient *top = [[NSGradient alloc] initWithColorsAndLocations:[ink() colorWithAlphaComponent:0.7], 0.0, [ink() colorWithAlphaComponent:0], 1.0, nil];
-    [top drawInRect:NSMakeRect(r.origin.x, r.origin.y, r.size.width, 44) angle:90];   /* under the theatre's line */
-    CGFloat shade = !c.installed ? (hot ? 0.5 : 0.62) : sel ? 0 : hot ? 0.14 : 0.4;
-    if (shade > 0) { [[ink() colorWithAlphaComponent:shade] setFill]; fill_over(r); }
-    NSColor *tc = c.installed ? (sel || hot ? text_c() : [text_c() colorWithAlphaComponent:0.8]) : dim();
-    draw_text(@(c.def->title).uppercaseString, heavy(25), tc, NSMakeRect(r.origin.x + 14, NSMaxY(r) - 36, r.size.width - 28, 30), NSTextAlignmentLeft, sh, 2.5);
-    draw_text(@(c.def->theatre), heavy(13), sel ? accent() : c.installed ? dim() : [dim() colorWithAlphaComponent:0.7], NSMakeRect(r.origin.x + 14, r.origin.y + 12, r.size.width - 28, 16), NSTextAlignmentLeft, sh, 3);
-    if (!c.installed) {                                                  /* a tag at the top right */
-        NSRect tag = NSMakeRect(NSMaxX(r) - 122, r.origin.y + 9, 112, 22);
-        [[ink() colorWithAlphaComponent:0.8] setFill]; fill_over(tag); stroke_rect(tag, [dim() colorWithAlphaComponent:0.55], 1);
-        draw_text(@"NOT INSTALLED", heavy(13), dim(), NSMakeRect(tag.origin.x, tag.origin.y + 5, tag.size.width, 16), NSTextAlignmentCenter, nil, 2.5);
+    if (sel) {                                                           /* the chosen one, lit from under */
+        [NSGraphicsContext saveGraphicsState]; NSShadow *gl = [NSShadow new]; gl.shadowColor = [accent() colorWithAlphaComponent:0.45]; gl.shadowBlurRadius = 14; [gl set];
+        [ink() setFill]; NSRectFill(r); [NSGraphicsContext restoreGraphicsState];
     }
-    stroke_rect(r, sel ? accent() : hot ? [accent() colorWithAlphaComponent:0.7] : [text_c() colorWithAlphaComponent:0.18], sel ? 2 : 1);
-    if (sel) corners(NSInsetRect(r, -6, -6), 14, foc ? 2.5 : 1.5, foc ? accent_hi() : accent());   /* the chosen one, in the sight */
+    plate(r, sel ? 0.55 : hot ? 0.35 : 0, foc ? accent_hi() : sel ? accent() : hot ? [accent() colorWithAlphaComponent:0.75] : nil);
+    NSRect ir = NSMakeRect(r.origin.x + 7, r.origin.y + 7, r.size.width - 14, 88);
+    [NSGraphicsContext saveGraphicsState]; NSRectClip(ir);
+    [ink() setFill]; NSRectFill(ir);
+    if (c.card) { draw_cover(c.card, ir, 1, 0.5, 0.45); grade(ir, 0.2, 0.18); }
+    else { [rgb(c.def->r, c.def->g, c.def->b) setFill]; NSRectFill(ir); }
+    if (!c.installed) { [[NSColor colorWithWhite:0.5 alpha:1] setFill]; NSRectFillUsingOperation(ir, NSCompositingOperationSaturation); }
+    if (!sel) { [[ink() colorWithAlphaComponent:hot ? 0.15 : 0.38] setFill]; fill_over(ir); }
+    [[NSColor colorWithWhite:0 alpha:0.10] setFill]; for (CGFloat ly = ir.origin.y; ly < NSMaxY(ir); ly += 3) fill_over(NSMakeRect(ir.origin.x, ly, ir.size.width, 1));
+    draw_text(@(c.def->theatre), heavy(11), sel ? accent_hi() : [text_c() colorWithAlphaComponent:0.75], NSMakeRect(ir.origin.x + 14, ir.origin.y + 8, ir.size.width - 28, 14), NSTextAlignmentLeft, sh, 2.5);
+    [NSGraphicsContext restoreGraphicsState];
+    stroke_rect(NSInsetRect(ir, -1, -1), [accent() colorWithAlphaComponent:sel ? 0.65 : 0.25], 1);
+    if (sel) corners(NSInsetRect(ir, 5, 5), 10, 1.5, [accent_hi() colorWithAlphaComponent:0.9]);
+    NSColor *tc = c.installed ? (sel || hot ? text_c() : [text_c() colorWithAlphaComponent:0.82]) : dim();
+    draw_text(@(c.def->title).uppercaseString, heavy(20), tc, NSMakeRect(r.origin.x + 6, NSMaxY(ir) + 12, r.size.width - 12, 24), NSTextAlignmentCenter, sh, 2.5);
+    NSString *st = c.installed ? @"READY" : @"NOT INSTALLED"; NSColor *sc = c.installed ? ready_c() : dim();
+    NSAttributedString *at = [[NSAttributedString alloc] initWithString:st attributes:@{NSFontAttributeName: heavy(12), NSKernAttributeName: @3}];
+    CGFloat x = NSMidX(r) - (at.size.width + (c.installed ? 12 : 0)) / 2, y = NSMaxY(r) - 25;
+    if (c.installed) { [sc setFill]; [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(x, y + 4, 6, 6)] fill]; x += 12; }
+    draw_text(st, heavy(12), sc, NSMakeRect(x, y, at.size.width + 6, 15), NSTextAlignmentLeft, nil, 3);
 }
 - (void)drawTile:(NSInteger)k shadow:(NSShadow *)sh
 {
     GRTile *t = self.tiles[k]; NSRect r = [self tileRect:k]; NSDictionary *c = t.current ? t.current() : t.choices[t.index];
     BOOL hot = self.hover == HIT_TILE + 10 * k + 1, foc = self.focus == k, special = [c[@"accent"] boolValue], off = [c[@"off"] boolValue];
-    [[panel_c() colorWithAlphaComponent:hot ? 0.98 : 0.86] setFill]; fill_over(r);
-    stroke_rect(r, (hot || foc) ? accent() : [text_c() colorWithAlphaComponent:0.14], 1);
-    [((hot || foc) ? accent() : accent_dim()) setFill]; NSRectFill(NSMakeRect(r.origin.x, r.origin.y, 3, r.size.height));   /* a khaki edge */
-    if (foc) corners(NSInsetRect(r, -5, -5), 9, 1.5, accent());
-    draw_text(t.title.uppercaseString, heavy(15), (hot || foc) ? accent() : dim(), NSMakeRect(r.origin.x + 3, r.origin.y + 11, r.size.width - 3, 18), NSTextAlignmentCenter, nil, 3);
-    NSColor *vc = off ? dim() : special ? accent() : hot ? NSColor.whiteColor : text_c();
-    draw_text(t.summary ? t.summary() : c[@"label"], body(14.5, YES), vc, NSMakeRect(r.origin.x + 18, r.origin.y + 33, r.size.width - 34, 24), NSTextAlignmentCenter, sh, 0.2);
+    plate(r, hot || foc ? 0.8 : 0, foc ? accent_hi() : hot ? accent() : nil);
+    draw_text(t.title.uppercaseString, heavy(14), (hot || foc) ? accent_hi() : accent(), NSMakeRect(r.origin.x + 16, r.origin.y + 10, r.size.width - 30, 16), NSTextAlignmentLeft, nil, 3);
+    NSColor *vc = off ? dim() : special ? accent_hi() : hot ? NSColor.whiteColor : text_c();
+    draw_text(t.summary ? t.summary() : c[@"label"], body(t.summary ? 15 : 17, YES), vc, NSMakeRect(r.origin.x + 16, r.origin.y + 28, r.size.width - 28, 22), NSTextAlignmentLeft, sh, 0.2);
+    NSString *note = t.summary ? (t.choices.firstObject[@"note"] ?: @"") : (c[@"note"] ?: @"");
+    draw_text(note, body(10.5, NO), dim(), NSMakeRect(r.origin.x + 16, r.origin.y + 50, r.size.width - 26, 14), NSTextAlignmentLeft, nil, 0);
+    if (!t.summary && !t.activate && t.choices.count > 1) for (NSUInteger q = 0; q < t.choices.count; q++) {   /* which choice of how many */
+        NSRect d = NSMakeRect(NSMaxX(r) - 18 - 9 * (CGFloat)(t.choices.count - 1 - q), r.origin.y + 13, 5, 5);
+        [(q == (NSUInteger)t.index ? accent_hi() : [accent() colorWithAlphaComponent:0.3]) setFill]; NSRectFill(d);
+    }
 }
 - (void)drawPanel:(NSShadow *)sh                        /* Graphics Options: a panel over the window, a row per setting */
 {
@@ -384,7 +427,8 @@ static void draw_fill_z(NSImage *img, NSRect r, CGFloat alpha, CGFloat z, CGFloa
     [img drawInRect:r fromRect:NSMakeRect((s.width - w) * fx, (s.height - h) * (1 - fy), w, h) operation:NSCompositingOperationSourceOver fraction:alpha respectFlipped:YES hints:@{NSImageHintInterpolation: @(q)}];
 }
 - (CGFloat)scale { return self.window ? self.window.backingScaleFactor : 2; }
-- (NSRect)portraitRect { return NSMakeRect(W - 60 - 236, 30, 236, 252); }
+- (NSRect)portraitRect { return NSMakeRect(W - 48 - 300, 30, 300, 470); }
+- (NSRect)portraitPicture { NSRect in = NSInsetRect(self.portraitRect, 10, 10); in.size.height = floor(in.size.width * 800 / 594); return in; }   /* (the box's shape) */
 - (NSImage *)sprite:(NSString *)key colors:(NSArray<NSColor *> *)cols
 {
     NSImage *c = self.cache[key]; if (c) return c;
@@ -469,18 +513,19 @@ static int frames_drawn;   /* (GR_LAUNCHER_TIMING: frames a second, in the windo
         [[accent_hi() colorWithAlphaComponent:0.08 + 0.16 * fabs(sin(T * 0.6 * sp + i))] setFill]; CGFloat r = (CGFloat)(0.5 + 0.9 * sp);
         NSRectFillUsingOperation(NSMakeRect(x - r, y - r * 0.7, r * 2.2, r * 1.4), NSCompositingOperationSourceOver);
     }
-    /* the portrait (its frame is in the still part): the chosen campaign's soldier, a scan sweeping down the sight */
+    /* the portrait (its frame is in the still part): the chosen campaign's box art or field picture, a scan sweeping down */
     {
-        NSRect in = NSInsetRect(self.portraitRect, 9, 9);
+        NSRect in = self.portraitPicture;
         [NSGraphicsContext saveGraphicsState]; NSRectClip(in); [ink() setFill]; NSRectFill(in);
-        if (fading && self.campaigns[self.prevCampaign].portrait) draw_fill_z(self.campaigns[self.prevCampaign].portrait, in, 1, 1.02, 0.5, 0.35, NSImageInterpolationHigh);
-        GRCampaign *c = self.chosen;
-        if (c.portrait) draw_fill_z(c.portrait, in, fading ? (CGFloat)fade : 1, (CGFloat)(1.02 + 0.02 * sin(T * 0.21)), (CGFloat)(0.5 + 0.02 * sin(T * 0.13)), 0.35, NSImageInterpolationHigh);
+        GRCampaign *c = self.chosen, *pc = self.campaigns[self.prevCampaign];
+        if (fading && pc.portrait) draw_fill_z(pc.portrait, in, 1, pc.coverZ, pc.coverFx, pc.coverFy, NSImageInterpolationHigh);
+        if (c.portrait) draw_fill_z(c.portrait, in, fading ? (CGFloat)fade : 1, (CGFloat)(c.coverZ + 0.012 * (0.5 + 0.5 * sin(T * 0.21))), c.coverFx, c.coverFy, NSImageInterpolationHigh);
         if (!c.installed) { [[NSColor colorWithWhite:0.5 alpha:1] setFill]; NSRectFillUsingOperation(in, NSCompositingOperationSaturation); }
-        double ph = fmod(T * 0.22, 1.0); CGFloat y = in.origin.y + ph * in.size.height;
-        [[[NSGradient alloc] initWithColors:@[[accent() colorWithAlphaComponent:0], [accent() colorWithAlphaComponent:0.16], [accent() colorWithAlphaComponent:0]]] drawInRect:NSMakeRect(in.origin.x, y - 28, in.size.width, 56) angle:90];
-        [[NSColor colorWithWhite:0 alpha:0.10] setFill]; for (CGFloat ly = in.origin.y; ly < NSMaxY(in); ly += 3) NSRectFillUsingOperation(NSMakeRect(in.origin.x, ly, in.size.width, 1), NSCompositingOperationSourceOver);
-        NSGradient *foot = [[NSGradient alloc] initWithColorsAndLocations:[ink() colorWithAlphaComponent:0], 0.6, [ink() colorWithAlphaComponent:0.9], 1.0, nil]; [foot drawInRect:in angle:90];
+        double ph = fmod(T * 0.18, 1.0); CGFloat y = in.origin.y + ph * in.size.height;
+        [[[NSGradient alloc] initWithColors:@[[signal_c() colorWithAlphaComponent:0], [signal_c() colorWithAlphaComponent:0.10], [signal_c() colorWithAlphaComponent:0]]] drawInRect:NSMakeRect(in.origin.x, y - 26, in.size.width, 52) angle:90];
+        [[signal_c() colorWithAlphaComponent:0.35] setFill]; fill_over(NSMakeRect(in.origin.x, y, in.size.width, 1));
+        [[NSColor colorWithWhite:0 alpha:0.07] setFill]; for (CGFloat ly = in.origin.y; ly < NSMaxY(in); ly += 3) fill_over(NSMakeRect(in.origin.x, ly, in.size.width, 1));
+        NSGradient *foot = [[NSGradient alloc] initWithColorsAndLocations:[ink() colorWithAlphaComponent:0], 0.78, [ink() colorWithAlphaComponent:0.75], 1.0, nil]; [foot drawInRect:in angle:90];
         [NSGraphicsContext restoreGraphicsState];
     }
     NSString *sig = self.signature;
@@ -495,59 +540,69 @@ static int frames_drawn;   /* (GR_LAUNCHER_TIMING: frames a second, in the windo
 {
     NSRect b = self.bounds; GRCampaign *c = self.chosen; (void)b;
     NSShadow *sh = [NSShadow new]; sh.shadowColor = [NSColor colorWithWhite:0 alpha:0.85]; sh.shadowOffset = NSMakeSize(0, -1); sh.shadowBlurRadius = 3;
-    /* the portrait's frame: a gun-sight's, gunmetal, range ticks down its sides, brackets at its corners; its window clear */
+    /* the portrait's frame: gunmetal, range ticks down its sides, brackets at its corners, the picture's window clear, a
+     * caption band under it: the theatre and the operation */
     {
-        NSRect pr = self.portraitRect, in = NSInsetRect(pr, 9, 9);
-        NSShadow *ps = [NSShadow new]; ps.shadowColor = [NSColor colorWithWhite:0 alpha:0.85]; ps.shadowBlurRadius = 16; ps.shadowOffset = NSMakeSize(0, -5);
+        NSRect pr = self.portraitRect, in = self.portraitPicture;
+        NSShadow *ps = [NSShadow new]; ps.shadowColor = [NSColor colorWithWhite:0 alpha:0.9]; ps.shadowBlurRadius = 18; ps.shadowOffset = NSMakeSize(0, -6);
         [NSGraphicsContext saveGraphicsState]; [ps set]; [panel_c() setFill]; NSRectFill(pr); [NSGraphicsContext restoreGraphicsState];
-        [[[NSGradient alloc] initWithStartingColor:rgb(0.16, 0.17, 0.13) endingColor:rgb(0.06, 0.07, 0.05)] drawInRect:pr angle:-70];
-        stroke_rect(pr, [accent() colorWithAlphaComponent:0.45], 1);
-        [[accent() colorWithAlphaComponent:0.5] setFill];
-        for (CGFloat ty = pr.origin.y + 20; ty < NSMaxY(pr) - 16; ty += 10) { CGFloat len = fmod(ty - pr.origin.y, 40) < 10 ? 5 : 3;
+        [[[NSGradient alloc] initWithStartingColor:rgb(0.17, 0.18, 0.14) endingColor:rgb(0.05, 0.06, 0.045)] drawInRect:pr angle:-70];
+        [[NSColor colorWithWhite:0 alpha:0.16] setFill];                  /* (brushed) */
+        for (CGFloat x = pr.origin.x + 2; x < NSMaxX(pr) - 2; x += 2) fill_over(NSMakeRect(x, pr.origin.y + 2, 1, pr.size.height - 4));
+        stroke_rect(pr, accent(), 1.5);
+        stroke_rect(NSInsetRect(pr, 5, 5), [accent() colorWithAlphaComponent:0.30], 1);
+        [[accent() colorWithAlphaComponent:0.55] setFill];
+        for (CGFloat ty = in.origin.y + 14; ty < NSMaxY(in) - 10; ty += 10) { CGFloat len = fmod(ty - in.origin.y, 40) < 10 ? 5 : 3;
             NSRectFill(NSMakeRect(pr.origin.x + 2, ty, len, 1)); NSRectFill(NSMakeRect(NSMaxX(pr) - 2 - len, ty, len, 1)); }
         NSRectFillUsingOperation(in, NSCompositingOperationClear);
-        stroke_rect(NSInsetRect(in, -1, -1), [NSColor colorWithWhite:0 alpha:0.9], 1);
-        corners(NSInsetRect(in, 6, 6), 16, 1.5, accent());
-        reticle(NSMakePoint(NSMidX(in), NSMidY(in) - 24), 9, 1, [accent() colorWithAlphaComponent:0.35]);
-        draw_text(@(c.def->theatre), heavy(15), text_c(), NSMakeRect(in.origin.x, NSMaxY(in) - 26, in.size.width, 18), NSTextAlignmentCenter, sh, 4);
+        stroke_rect(NSInsetRect(in, -1, -1), [NSColor colorWithWhite:0 alpha:0.95], 1);
+        corners(NSInsetRect(in, 7, 7), 18, 2, accent_hi());
+        reticle(NSMakePoint(NSMidX(in), NSMidY(in) + 30), 11, 1, [signal_c() colorWithAlphaComponent:0.30]);
+        NSRect cap = NSMakeRect(pr.origin.x + 10, NSMaxY(in) + 1, pr.size.width - 20, NSMaxY(pr) - 10 - NSMaxY(in) - 1);
+        [[ink() colorWithAlphaComponent:0.85] setFill]; NSRectFill(cap);
+        rule_x(cap.origin.x + 14, NSMaxX(cap) - 14, cap.origin.y + 12, 0.75);
+        draw_text(@(c.def->theatre), heavy(22), text_c(), NSMakeRect(cap.origin.x, cap.origin.y + 22, cap.size.width, 26), NSTextAlignmentCenter, sh, 6);
+        draw_text(@(c.def->op), heavy(11.5), accent(), NSMakeRect(cap.origin.x, cap.origin.y + 47, cap.size.width, 14), NSTextAlignmentCenter, nil, 3);
     }
-    /* the title: the game's own (keyed out of its main menu), else as on the box: TOM CLANCY'S over GHOST RECON; the
-     * expansion's name under it */
+    /* the title: the game's own logo (from GOG's key art, else keyed out of its main menu), else as on the box */
     NSShadow *ts = [NSShadow new]; ts.shadowColor = [NSColor colorWithWhite:0 alpha:0.8]; ts.shadowOffset = NSMakeSize(0, -2); ts.shadowBlurRadius = 10;
+    CGFloat mid = 48 + 532 / 2;
     if (self.logo) {
-        NSSize ls = self.logo.size; CGFloat lw = 520, lh = lw * ls.height / MAX(1, ls.width);
-        NSShadow *ls2 = [NSShadow new]; ls2.shadowColor = [NSColor colorWithWhite:0 alpha:0.95]; ls2.shadowOffset = NSMakeSize(0, -2); ls2.shadowBlurRadius = 6;
+        NSSize ls = self.logo.size; CGFloat lh = 172, lw = lh * ls.width / MAX(1, ls.height);
+        if (lw > 500) { lw = 500; lh = lw * ls.height / ls.width; }
+        NSShadow *ls2 = [NSShadow new]; ls2.shadowColor = [NSColor colorWithWhite:0 alpha:0.9]; ls2.shadowOffset = NSMakeSize(0, -3); ls2.shadowBlurRadius = 9;
         [NSGraphicsContext saveGraphicsState]; [ls2 set];
-        [self.logo drawInRect:NSMakeRect(54, 158 - lh, lw, lh) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:@{NSImageHintInterpolation: @(NSImageInterpolationHigh)}];
+        [self.logo drawInRect:NSMakeRect(mid - lw / 2, 22 + (172 - lh) / 2, lw, lh) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:@{NSImageHintInterpolation: @(NSImageInterpolationHigh)}];
         [NSGraphicsContext restoreGraphicsState];
     } else {
-        draw_text(@"TOM CLANCY’S", heavy(19), [text_c() colorWithAlphaComponent:0.82], NSMakeRect(62, 52, 400, 22), NSTextAlignmentLeft, ts, 6);
-        draw_text(@"GHOST RECON", heavy(88), text_c(), NSMakeRect(58, 72, 600, 92), NSTextAlignmentLeft, ts, 3);
+        draw_text(@"TOM CLANCY’S", heavy(19), [text_c() colorWithAlphaComponent:0.82], NSMakeRect(48, 52, 532, 22), NSTextAlignmentCenter, ts, 6);
+        draw_text(@"GHOST RECON", heavy(88), text_c(), NSMakeRect(48, 72, 532, 92), NSTextAlignmentCenter, ts, 3);
     }
-    if (c.def->sub) {
-        [accent() setFill]; NSRectFill(NSMakeRect(62, 170, 26, 2));
-        draw_text(@(c.def->sub), heavy(30), accent(), NSMakeRect(98, 158, 500, 34), NSTextAlignmentLeft, ts, 9);
-    }
-    reticle(NSMakePoint(72, 252), 8, 1.5, accent());
-    draw_text(@"NATIVE FOR APPLE SILICON", heavy(20), text_c(), NSMakeRect(94, 243, 420, 24), NSTextAlignmentLeft, sh, 4);
-    NSString *tag = c.installed ? @"Metal · your Steam copy, recompiled · one program for all three campaigns"
-                                : (self.campaign == 0 ? (gr_dropin ? @"Game files missing" : @"Game files missing · run ./install.sh")
-                                   : [NSString stringWithFormat:@"Not installed · download_depot %s, then %@", c.def->depot, gr_dropin ? @"add its Mods folder" : @"./install.sh"]);
-    draw_text(tag, body(12.5, NO), accent(), NSMakeRect(94, 266, 600, 20), NSTextAlignmentLeft, sh, 0.3);
+    rule_x(64, 48 + 532 - 16, 206, 0.8);
+    NSString *credit = [NSString stringWithFormat:@"%@RED STORM ENTERTAINMENT  ·  %s", c.def->sub ? [NSString stringWithFormat:@"%s  ·  ", c.def->sub] : @"", c.def->year];
+    draw_text(credit, heavy(15), accent(), NSMakeRect(48, 218, 532, 18), NSTextAlignmentCenter, sh, 4);
+    { NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new]; ps.alignment = NSTextAlignmentCenter; ps.lineSpacing = 3;
+      [@(c.def->blurb) drawWithRect:NSMakeRect(70, 242, 488, 44) options:NSStringDrawingUsesLineFragmentOrigin
+                       attributes:@{NSFontAttributeName: [NSFontManager.sharedFontManager convertFont:body(14, NO) toHaveTrait:NSItalicFontMask],
+                                    NSForegroundColorAttributeName: [text_c() colorWithAlphaComponent:0.92], NSParagraphStyleAttributeName: ps, NSShadowAttributeName: sh}]; }
     /* the campaigns */
-    draw_text(@"CAMPAIGNS", heavy(15), dim(), NSMakeRect(60, 294, 300, 18), NSTextAlignmentLeft, nil, 4);
-    draw_text(@(c.def->title).uppercaseString, heavy(15), accent(), NSMakeRect(W - 60 - 500, 294, 500, 18), NSTextAlignmentRight, nil, 4);
+    reticle(NSMakePoint(55, 303), 5, 1.2, accent());
+    draw_text(@"CAMPAIGNS", heavy(15), accent(), NSMakeRect(66, 295, 300, 18), NSTextAlignmentLeft, nil, 4);
+    draw_text(@"THE GHOSTS  ·  ONE PROGRAM, ALL THREE", heavy(11), [dim() colorWithAlphaComponent:0.8], NSMakeRect(48 + 532 - 360, 298, 360, 14), NSTextAlignmentRight, nil, 2.5);
+    reticle(NSMakePoint(55, 507), 5, 1.2, accent());
+    draw_text(@"SETTINGS", heavy(15), accent(), NSMakeRect(66, 499, 300, 18), NSTextAlignmentLeft, nil, 4);
     NSInteger hov = self.hover, foc = self.focus; if (self.open) self.hover = self.focus = HIT_NONE;   /* under the panel: nothing lit */
     for (NSInteger i = 0; i < NCAMP; i++) [self drawCard:i shadow:sh];
     for (NSInteger k = 0; k < (NSInteger)self.tiles.count; k++) [self drawTile:k shadow:sh];
     self.hover = hov; self.focus = foc;
-    [[text_c() colorWithAlphaComponent:0.1] setFill]; fill_over(NSMakeRect(60, H - 90, 840, 1));
+    [[[NSGradient alloc] initWithColors:@[[accent() colorWithAlphaComponent:0], [accent() colorWithAlphaComponent:0.3], [accent() colorWithAlphaComponent:0]]] drawInRect:NSMakeRect(48, H - 86, W - 96, 1) angle:0];
+    draw_text(@"NATIVE FOR APPLE SILICON  ·  METAL", heavy(11), [dim() colorWithAlphaComponent:0.75], NSMakeRect(48, H - 22, 400, 14), NSTextAlignmentLeft, nil, 3);
     if (self.open) [self drawPanel:sh];
     NSString *hint = [self currentHint];
     if (hint.length) {                                                   /* up to two lines beside Quit */
         NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new]; ps.lineBreakMode = NSLineBreakByWordWrapping;
         NSDictionary *a = @{NSFontAttributeName: body(12.5, NO), NSForegroundColorAttributeName: dim(), NSParagraphStyleAttributeName: ps, NSShadowAttributeName: sh};
-        NSRect hr = NSMakeRect(60, 0, NSMinX(self.quitRect) - 80, 40);
+        NSRect hr = NSMakeRect(48, 0, NSMinX(self.quitRect) - 70, 40);
         CGFloat th = MIN(40, ceil([hint boundingRectWithSize:hr.size options:NSStringDrawingUsesLineFragmentOrigin attributes:a].size.height));
         hr.origin.y = NSMidY(self.quitRect) - th / 2; hr.size.height = th + 2; [hint drawWithRect:hr options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine attributes:a];
     }
@@ -739,12 +794,20 @@ static NSAlert *alert(NSString *msg, NSString *info) { NSAlert *a = [NSAlert new
         NSMutableArray *sc = [NSMutableArray array];
         for (NSUInteger k = 0; k < MAX(own.count, store.count); k++) { if (k < store.count) [sc addObject:store[k]]; if (k < own.count) [sc addObject:own[k]]; }
         c.scenes = sc;
-        NSImage *por = image_at(art, @"portrait.png") ?: image_at(art, @"intro-3.jpg") ?: image_at(art, @"intro-2.jpg") ?: c.hero;
+        NSImage *por = image_at(art, @"cover.jpg") ?: c.hero ?: image_at(art, @"portrait.png") ?: image_at(art, @"intro-3.jpg") ?: image_at(art, @"intro-2.jpg");   /* the box art (GOG), else the field */
         c.portrait = ready(por, 1000);
+        c.coverZ = 1.0; c.coverFx = d->heroX; c.coverFy = d->heroY;
+        NSImage *key = i == 0 ? image_at(art, @"keyart.png") : nil;
+        if (key && key.size.width > 1000) {                              /* GOG's key art: the Ghost in goggles, left of its logo */
+            NSSize ks = key.size; CGFloat aspect = 594.0 / 800, vis1 = ks.height * aspect, want = ks.width * 0.28;   /* (448 of its 1600) */
+            c.portrait = ready(key, 1600); c.coverZ = MAX(1, vis1 / want); c.coverFx = 0;
+            CGFloat visH = ks.height / c.coverZ; c.coverFy = visH < ks.height ? MIN(1, ks.height * 0.027 / (ks.height - visH)) : 0.5;
+        }
         [camps addObject:c];
     }
     GRLaunchView *v = [[GRLaunchView alloc] initWithFrame:NSMakeRect(0, 0, W, H)]; self.view = v;
-    v.logo = image_at(@[[res stringByAppendingPathComponent:@"art/gr"], [self.data stringByAppendingPathComponent:@"art/gr"]], @"logo.png");   /* the game's own title */
+    NSArray *grArt = @[[res stringByAppendingPathComponent:@"art/gr"], [self.data stringByAppendingPathComponent:@"art/gr"]];
+    v.logo = image_at(grArt, @"logo-hd.png") ?: image_at(grArt, @"logo.png");   /* the game's own title: GOG's key art's, else the menu's */
     v.hover = v.pressed = HIT_NONE; v.focus = -1; v.campaigns = camps;
     NSInteger s = campaign_index(saved[@"campaign"]); v.campaign = s >= 0 && camps[s].installed ? s : 0;
     v.hint = @"←/→ choose a campaign · ↑/↓ settings · Return plays · Esc quits";
